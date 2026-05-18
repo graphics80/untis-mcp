@@ -16,3 +16,4 @@ test-mcp.js
 test-subjects.js
 quick-test.sh
 src/node-webuntis.d.ts
+src/__tests__/integration.test.ts
