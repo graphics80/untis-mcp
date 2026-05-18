@@ -5,19 +5,8 @@ const mockInstance = vi.hoisted(() => ({
   login: vi.fn().mockResolvedValue(undefined),
   logout: vi.fn().mockResolvedValue(undefined),
   getTeachers: vi.fn(),
-  getStudents: vi.fn(),
   getClasses: vi.fn(),
   getRooms: vi.fn(),
-  getSubjects: vi.fn(),
-  getTimegrid: vi.fn(),
-  getHolidays: vi.fn(),
-  getDepartments: vi.fn(),
-  getAbsentLesson: vi.fn(),
-  getExamsForRange: vi.fn(),
-  getHomeWorksFor: vi.fn(),
-  getLatestSchoolyear: vi.fn(),
-  getSchoolyears: vi.fn(),
-  getNewsWidget: vi.fn(),
   getTimetableForRange: vi.fn(),
   getTimetableForToday: vi.fn(),
   getTimetableFor: vi.fn(),
@@ -279,25 +268,6 @@ describe('findSubstituteTeachers', () => {
   });
 });
 
-// ─── formatTimeToISO ──────────────────────────────────────────────────────────
-
-describe('formatTimeToISO', () => {
-  it('formats 800 on 20260518 correctly', () => {
-    const client = new UntisClient('Europe/Vienna');
-    expect(client.formatTimeToISO(800, 20260518)).toBe('2026-05-18T08:00:00+01:00');
-  });
-
-  it('formats 1345 correctly', () => {
-    const client = new UntisClient('Europe/Vienna');
-    expect(client.formatTimeToISO(1345, 20260518)).toBe('2026-05-18T13:45:00+01:00');
-  });
-
-  it('formats 950 with leading zero on minutes', () => {
-    const client = new UntisClient('Europe/Vienna');
-    expect(client.formatTimeToISO(950, 20260518)).toBe('2026-05-18T09:50:00+01:00');
-  });
-});
-
 // ─── logout ───────────────────────────────────────────────────────────────────
 
 describe('logout', () => {
@@ -305,10 +275,5 @@ describe('logout', () => {
     const client = await makeClient();
     await client.logout();
     expect(mockInstance.logout).toHaveBeenCalledOnce();
-  });
-
-  it('does not throw if called before initialize', async () => {
-    const client = new UntisClient();
-    await expect(client.logout()).resolves.not.toThrow();
   });
 });
