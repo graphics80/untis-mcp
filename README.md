@@ -65,6 +65,28 @@ claude mcp add untis -e WEBUNTIS_SCHOOL=your-school -e WEBUNTIS_USERNAME=your-us
   -- npx -y untis-mcp
 ```
 
+### Local development (Claude Desktop)
+
+If you're working on the server itself, point Claude Desktop at your local build instead of the npm package. Run `npm run build` after changes, then restart Claude Desktop.
+
+```json
+{
+  "mcpServers": {
+    "untis": {
+      "command": "node",
+      "args": ["/absolute/path/to/untis_mcp/dist/server.js"],
+      "env": {
+        "WEBUNTIS_SCHOOL": "your-school-name",
+        "WEBUNTIS_USERNAME": "your-username",
+        "WEBUNTIS_PASSWORD": "your-password",
+        "WEBUNTIS_BASE_URL": "your-school.webuntis.com",
+        "SCHOOL_TIMEZONE": "Europe/Vienna"
+      }
+    }
+  }
+}
+```
+
 ---
 
 ## Development Setup
