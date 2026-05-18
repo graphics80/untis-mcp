@@ -1,16 +1,23 @@
 {
   "name": "untis-mcp",
   "version": "1.0.0",
-  "description": "MCP server for GP Untis WebUntis API",
+  "description": "MCP server for WebUntis school scheduling — timetables, substitute finder, room availability, and more",
   "type": "module",
   "main": "dist/server.js",
+  "bin": {
+    "untis-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist/"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
+    "prepublishOnly": "npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["untis", "mcp", "webuntis"],
+  "keywords": ["untis", "mcp", "webuntis", "model-context-protocol", "school", "timetable"],
   "author": "",
   "license": "MIT",
   "dependencies": {

@@ -31,7 +31,7 @@ Model Context Protocol (MCP) server that gives Claude AI read access to WebUntis
 
 ## Usage as MCP (Claude Desktop / Claude Code)
 
-No `.env` file needed. Credentials are passed directly via the MCP client configuration.
+No install, no clone, no build. Credentials are passed directly via the MCP client config — no `.env` file needed.
 
 ### Claude Desktop
 
@@ -41,8 +41,8 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 {
   "mcpServers": {
     "untis": {
-      "command": "node",
-      "args": ["/absolute/path/to/untis_mcp/dist/server.js"],
+      "command": "npx",
+      "args": ["-y", "untis-mcp"],
       "env": {
         "WEBUNTIS_SCHOOL": "your-school-name",
         "WEBUNTIS_USERNAME": "your-username",
@@ -55,17 +55,15 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 }
 ```
 
-You need to build the project first (see [Development Setup](#development-setup)).
+Restart Claude Desktop after saving. `npx` downloads and runs the server automatically on first use.
 
 ### Claude Code (CLI)
 
-Add to your project's `.mcp.json` or run:
-
 ```bash
-claude mcp add untis -- node /absolute/path/to/untis_mcp/dist/server.js
+claude mcp add untis -e WEBUNTIS_SCHOOL=your-school -e WEBUNTIS_USERNAME=your-username \
+  -e WEBUNTIS_PASSWORD=your-password -e WEBUNTIS_BASE_URL=your-school.webuntis.com \
+  -- npx -y untis-mcp
 ```
-
-Then set the environment variables in your MCP config file under the `env` key as shown above.
 
 ---
 
