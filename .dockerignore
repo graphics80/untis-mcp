@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.production
+.env.local
+.git
+.gitignore
+src/__tests__
+coverage
+*.md
+!README.md
+docker-compose.yml
+Caddyfile
+nginx.conf
+scripts
