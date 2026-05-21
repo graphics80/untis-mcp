@@ -1,615 +1,318 @@
 #!/usr/bin/env node
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { randomUUID, createHash, timingSafeEqual } from 'crypto';
+import express from 'express';
+import cors from 'cors';
 import * as dotenv from 'dotenv';
 import { UntisClient } from './untis-client.js';
-import { TOOLS, toolSchemas } from './schemas.js';
-import {
-  TimetableResponse,
-  StudentResponse,
-  TeacherResponse,
-  ClassResponse,
-  RoomResponse,
-} from './types.js';
+import { createMcpStack, handleMcpRequest, McpStack } from './http/transport-manager.js';
+import { oauthStore, generateCode, generateToken, verifyPkce } from './http/oauth-store.js';
 
 dotenv.config();
 
-const untisClient = new UntisClient(process.env.SCHOOL_TIMEZONE || 'Europe/Vienna');
-
-const server = new Server(
-  {
-    name: 'untis-mcp',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  },
-);
-
-// Initialize WebUntis client on server startup
-async function initializeUntis(): Promise<void> {
-  const school = process.env.WEBUNTIS_SCHOOL;
-  const username = process.env.WEBUNTIS_USERNAME;
-  const password = process.env.WEBUNTIS_PASSWORD;
-  const baseUrl = process.env.WEBUNTIS_BASE_URL;
-
-  if (!school || !username || !password || !baseUrl) {
-    throw new Error('Missing required environment variables: WEBUNTIS_SCHOOL, WEBUNTIS_USERNAME, WEBUNTIS_PASSWORD, WEBUNTIS_BASE_URL');
-  }
-
-  await untisClient.initialize(school, username, password, baseUrl);
+function requireEnv(name: string): string {
+  const val = process.env[name];
+  if (!val) throw new Error(`Missing required environment variable: ${name}`);
+  return val;
 }
 
-// List available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: TOOLS.GET_TIMETABLE,
-        description: 'Get timetable for a class, teacher, or room',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            classId: { type: 'number', description: 'Class ID (optional)' },
-            teacherId: { type: 'number', description: 'Teacher ID (optional)' },
-            roomId: { type: 'number', description: 'Room ID (optional)' },
-            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD, optional)' },
-            endDate: { type: 'string', description: 'End date (YYYY-MM-DD, optional)' },
-          },
-          required: [],
-        },
-      },
-      {
-        name: TOOLS.GET_TEACHERS,
-        description: 'Get all teachers',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_CLASSES,
-        description: 'Get all classes',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_ROOMS,
-        description: 'Get all rooms',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_STUDENTS,
-        description: 'Get all students',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_ABSENCES,
-        description: 'Get absences for date range',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-            endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
-          },
-          required: ['startDate', 'endDate'],
-        },
-      },
-      {
-        name: TOOLS.GET_SUBJECTS_LIST,
-        description: 'Get all subjects/courses offered',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_TEACHER_SUBJECTS,
-        description: 'Get which subjects each teacher teaches',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            days: { type: 'number', description: 'Number of days to scan (default: 7)' },
-          },
-          required: [],
-        },
-      },
-      {
-        name: TOOLS.GET_TIMEGRID,
-        description: 'Get the school timegrid: when each lesson period (Stunde) starts and ends, per weekday',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_HOLIDAYS,
-        description: 'Get all school holidays and vacation periods',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_DEPARTMENTS,
-        description: 'Get all departments/divisions of the school',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.CHECK_TEACHER_AVAILABILITY,
-        description: 'Check if a specific teacher is free at a given time slot and show what they are teaching if busy',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            teacherId: { type: 'number', description: 'Teacher ID' },
-            date: { type: 'string', description: 'Date (YYYY-MM-DD)' },
-            startTime: { type: 'number', description: 'Start time in Hmm format (e.g. 800)' },
-            endTime: { type: 'number', description: 'End time in Hmm format (e.g. 850)' },
-          },
-          required: ['teacherId', 'date', 'startTime', 'endTime'],
-        },
-      },
-      {
-        name: TOOLS.FIND_AVAILABLE_ROOMS,
-        description: 'Find all rooms that are free at a given date and time slot',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            date: { type: 'string', description: 'Date (YYYY-MM-DD)' },
-            startTime: { type: 'number', description: 'Start time in Hmm format (e.g. 800)' },
-            endTime: { type: 'number', description: 'End time in Hmm format (e.g. 850)' },
-          },
-          required: ['date', 'startTime', 'endTime'],
-        },
-      },
-      {
-        name: TOOLS.GET_TEACHER_WORKLOAD,
-        description: 'Get the lesson count and subject distribution for a teacher over a date range',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            teacherId: { type: 'number', description: 'Teacher ID' },
-            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-            endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
-          },
-          required: ['teacherId', 'startDate', 'endDate'],
-        },
-      },
-      {
-        name: TOOLS.GET_WEEK_OVERVIEW,
-        description: 'Get the full timetable for an entire week (Mon–Fri) for a class or teacher, grouped by day',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            classId: { type: 'number', description: 'Class ID (optional, provide this or teacherId)' },
-            teacherId: { type: 'number', description: 'Teacher ID (optional, provide this or classId)' },
-            weekDate: { type: 'string', description: 'Any date within the target week (YYYY-MM-DD)' },
-          },
-          required: ['weekDate'],
-        },
-      },
-      {
-        name: TOOLS.GET_EXAMS,
-        description: 'Get exams/tests for a date range, optionally filtered by class',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-            endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
-            classId: { type: 'number', description: 'Class ID to filter by (optional)' },
-          },
-          required: ['startDate', 'endDate'],
-        },
-      },
-      {
-        name: TOOLS.GET_HOMEWORK,
-        description: 'Get homework assignments for a date range',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-            endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
-          },
-          required: ['startDate', 'endDate'],
-        },
-      },
-      {
-        name: TOOLS.GET_SCHOOL_YEAR,
-        description: 'Get the current school year and all available school years',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: TOOLS.GET_NEWS,
-        description: 'Get the news/messages of the day from the WebUntis news widget',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            date: { type: 'string', description: 'Date to fetch news for (YYYY-MM-DD, default: today)' },
-          },
-          required: [],
-        },
-      },
-      {
-        name: TOOLS.FIND_SUBSTITUTE_TEACHERS,
-        description: 'Find teachers who can substitute a lesson: qualified for the subject AND free at the given time slot',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            date: { type: 'string', description: 'Date of the lesson (YYYY-MM-DD)' },
-            startTime: { type: 'number', description: 'Lesson start time in Hmm format (e.g. 800 = 08:00, 1015 = 10:15)' },
-            endTime: { type: 'number', description: 'Lesson end time in Hmm format (e.g. 850 = 08:50)' },
-            subjectName: { type: 'string', description: 'Subject name or partial name (case-insensitive match)' },
-            qualificationDays: { type: 'number', description: 'Days of history to determine teacher qualifications (default: 14)' },
-          },
-          required: ['date', 'startTime', 'endTime', 'subjectName'],
-        },
-      },
-    ],
-  };
-});
+const BASE_URL = process.env.BASE_URL || 'https://mcp.it.bzz.ch';
+const MCP_PATH = '/untis';
+const MCP_RESOURCE = `${BASE_URL}${MCP_PATH}`;
 
-// Tool handler
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args = {} } = request.params;
+interface McpSession {
+  stack: McpStack;
+  client: UntisClient;
+  lastAccess: number;
+}
 
-  try {
-    // Validate arguments against schema
-    const schema = toolSchemas[name as keyof typeof toolSchemas];
-    if (!schema) {
-      return {
-        content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }],
-        isError: true,
-      };
+const SESSION_TTL_MS = 60 * 60 * 1000; // 1h — matches token TTL
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function loginPage(params: Record<string, string>, error?: string): string {
+  const h = escHtml;
+  const fields = ['client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'state', 'resource'];
+  const hidden = fields.map(f => `<input type="hidden" name="${f}" value="${h(params[f] ?? '')}">`).join('\n');
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Untis MCP – Anmelden</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:system-ui,sans-serif;background:#f0f0f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{background:#fff;border-radius:12px;padding:32px;width:100%;max-width:380px;box-shadow:0 2px 16px rgba(0,0,0,.1)}
+    h1{font-size:1.25rem;margin-bottom:6px;color:#111}
+    .sub{color:#666;font-size:.875rem;margin-bottom:24px;line-height:1.4}
+    label{display:block;font-size:.8rem;color:#555;margin-bottom:3px;font-weight:500}
+    input[type=text],input[type=password]{width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:.95rem;margin-bottom:14px;outline:none;transition:border .15s}
+    input:focus{border-color:#111}
+    button{width:100%;padding:10px;background:#111;color:#fff;border:none;border-radius:6px;font-size:.95rem;cursor:pointer;margin-top:6px;font-weight:500}
+    button:hover{background:#333}
+    .err{background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;padding:9px 12px;border-radius:6px;font-size:.875rem;margin-bottom:16px}
+    .badge{display:inline-block;background:#f3f4f6;color:#374151;font-size:.75rem;padding:2px 8px;border-radius:99px;margin-bottom:20px}
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Untis MCP</h1>
+  <span class="badge">BZZ Berufsschule Zürich</span>
+  <p class="sub">Melde dich mit deinen Zugangsdaten an, um Stundenplan-Daten in Claude zu nutzen.</p>
+  ${error ? `<div class="err">${h(error)}</div>` : ''}
+  <form method="POST" action="/oauth/authorize">
+    <label for="u">Benutzername</label>
+    <input type="text" id="u" name="username" required autocomplete="username" placeholder="vorname.nachname">
+    <label for="p">Passwort</label>
+    <input type="password" id="p" name="password" required autocomplete="current-password" placeholder="Passwort">
+    ${hidden}
+    <button type="submit">Anmelden &amp; Verbinden</button>
+  </form>
+</div>
+</body>
+</html>`;
+}
+
+function parseMcpUsers(raw: string): Map<string, Buffer> {
+  const users = new Map<string, Buffer>();
+  for (const pair of raw.split(',')) {
+    const colon = pair.indexOf(':');
+    if (colon < 1) continue;
+    const username = pair.slice(0, colon).trim();
+    const password = pair.slice(colon + 1).trim();
+    if (username && password) {
+      users.set(username.toLowerCase(), Buffer.from(password));
     }
-
-    const validatedArgs = schema.parse(args);
-    let result: TimetableResponse | StudentResponse | TeacherResponse | ClassResponse | RoomResponse | object;
-
-    switch (name) {
-      case TOOLS.GET_TIMETABLE: {
-        const timetableArgs = validatedArgs as any;
-        const { classId, teacherId, roomId, startDate: startDateStr, endDate: endDateStr } = timetableArgs;
-        const startDate = startDateStr ? new Date(startDateStr) : undefined;
-        const endDate = endDateStr ? new Date(endDateStr) : undefined;
-
-        let lessons: any[] = [];
-
-        if (classId) {
-          lessons = await untisClient.getTimetableForClass(classId, startDate, endDate);
-        } else if (teacherId) {
-          lessons = await untisClient.getTimetableForTeacher(teacherId, startDate, endDate);
-        } else if (roomId) {
-          lessons = await untisClient.getTimetableForRoom(roomId, startDate, endDate);
-        } else {
-          throw new Error('Must provide classId, teacherId, or roomId');
-        }
-
-        result = {
-          lessons: lessons.map((lesson) => ({
-            id: lesson.id,
-            date: lesson.date,
-            startTime: untisClient.formatTimeToISO(lesson.startTime, lesson.date),
-            endTime: untisClient.formatTimeToISO(lesson.endTime, lesson.date),
-            classes: lesson.kl?.map((c: any) => c.name) || [],
-            teachers: lesson.te?.map((t: any) => t.name) || [],
-            subject: lesson.su?.[0]?.name || 'Unknown',
-            rooms: lesson.ro?.map((r: any) => r.name) || [],
-            cancelled: lesson.code === 'cancelled',
-            substitution: lesson.code === 'irregular',
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_TEACHERS: {
-        const teachers = await untisClient.getTeachers();
-        result = {
-          teachers: teachers.map((teacher) => ({
-            id: teacher.id,
-            name: teacher.name,
-            longName: teacher.longName || '',
-            title: teacher.title || '',
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_CLASSES: {
-        const classes = await untisClient.getClasses();
-        result = {
-          classes: classes.map((klasse) => ({
-            id: klasse.id,
-            name: klasse.name,
-            longName: klasse.longName || '',
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_ROOMS: {
-        const rooms = await untisClient.getRooms();
-        result = {
-          rooms: rooms.map((room) => ({
-            id: room.id,
-            name: room.name,
-            building: room.building || '',
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_STUDENTS: {
-        const students = await untisClient.getStudents();
-        result = {
-          students: students.map((student) => ({
-            id: student.id,
-            firstName: student.firstName,
-            lastName: student.lastName,
-            key: student.key || '',
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_ABSENCES: {
-        const startDate = (args as any).startDate ? new Date((args as any).startDate as string) : undefined;
-        const endDate = (args as any).endDate ? new Date((args as any).endDate as string) : undefined;
-
-        if (!startDate || !endDate) {
-          throw new Error('startDate and endDate are required');
-        }
-
-        const absences = await untisClient.getAbsences(startDate, endDate);
-        result = {
-          absences: absences.absences?.map((absence: any) => ({
-            id: absence.id,
-            date: absence.date,
-            startTime: absence.startTime,
-            endTime: absence.endTime,
-          })) || [],
-        };
-        break;
-      }
-
-case TOOLS.GET_SUBJECTS_LIST: {
-        const subjects = await untisClient.getSubjects();
-        result = {
-          subjects: subjects.map((subject: any) => ({
-            id: subject.id,
-            name: subject.name,
-            longName: subject.longName,
-            shortName: subject.alternateName || subject.name,
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_TEACHER_SUBJECTS: {
-        const teacherSubjectsArgs = validatedArgs as any;
-        const { days } = teacherSubjectsArgs;
-        const teacherSubjects = await untisClient.getTeacherSubjects(days);
-        result = {
-          teacherSubjects,
-          description: `Teacher-Subject mapping based on last ${days} days of timetables`,
-        };
-        break;
-      }
-
-      case TOOLS.GET_EXAMS: {
-        const exArgs = validatedArgs as any;
-        const exams = await untisClient.getExams(
-          new Date(exArgs.startDate),
-          new Date(exArgs.endDate),
-          exArgs.classId,
-        );
-        result = {
-          exams: exams.map((e: any) => ({
-            id: e.id,
-            name: e.name || '',
-            examType: e.examType || '',
-            subject: e.subject || '',
-            date: String(e.examDate),
-            startTime: e.startTime,
-            endTime: e.endTime,
-            classes: e.studentClass || [],
-            teachers: e.teachers || [],
-            rooms: e.rooms || [],
-            text: e.text || '',
-          })),
-          count: exams.length,
-        };
-        break;
-      }
-
-      case TOOLS.GET_HOMEWORK: {
-        const hwArgs = validatedArgs as any;
-        const homework = await untisClient.getHomework(
-          new Date(hwArgs.startDate),
-          new Date(hwArgs.endDate),
-        );
-        result = {
-          homework: homework.map((h: any) => ({
-            id: h.id,
-            lessonId: h.lessonId,
-            date: String(h.date),
-            dueDate: String(h.dueDate),
-            text: h.text || '',
-            remark: h.remark || '',
-            completed: h.completed || false,
-          })),
-          count: homework.length,
-        };
-        break;
-      }
-
-      case TOOLS.GET_SCHOOL_YEAR: {
-        const sy = await untisClient.getSchoolYear();
-        result = {
-          current: {
-            id: sy.current?.id,
-            name: sy.current?.name,
-            startDate: sy.current?.startDate,
-            endDate: sy.current?.endDate,
-          },
-          all: (sy.all || []).map((y: any) => ({
-            id: y.id,
-            name: y.name,
-            startDate: y.startDate,
-            endDate: y.endDate,
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_NEWS: {
-        const newsArgs = validatedArgs as any;
-        const newsDate = newsArgs.date ? new Date(newsArgs.date) : new Date();
-        const news = await untisClient.getNews(newsDate);
-        result = {
-          messagesOfDay: (news.messagesOfDay || []).map((m: any) => ({
-            id: m.id,
-            subject: m.subject || '',
-            text: m.text || '',
-          })),
-          rssUrl: news.rssUrl || null,
-        };
-        break;
-      }
-
-      case TOOLS.GET_HOLIDAYS: {
-        const holidays = await untisClient.getHolidays();
-        result = {
-          holidays: holidays.map((h: any) => ({
-            id: h.id,
-            name: h.name,
-            longName: h.longName || '',
-            startDate: String(h.startDate),
-            endDate: String(h.endDate),
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.GET_DEPARTMENTS: {
-        const departments = await untisClient.getDepartments();
-        result = {
-          departments: departments.map((d: any) => ({
-            id: d.id,
-            name: d.name,
-            longName: d.longName || '',
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.CHECK_TEACHER_AVAILABILITY: {
-        const avArgs = validatedArgs as any;
-        const avDate = new Date(avArgs.date);
-        const avResult = await untisClient.checkTeacherAvailability(
-          avArgs.teacherId,
-          avDate,
-          avArgs.startTime,
-          avArgs.endTime,
-        );
-        result = { date: avArgs.date, teacherId: avArgs.teacherId, ...avResult };
-        break;
-      }
-
-      case TOOLS.FIND_AVAILABLE_ROOMS: {
-        const roomArgs = validatedArgs as any;
-        const roomDate = new Date(roomArgs.date);
-        const rooms = await untisClient.findAvailableRooms(roomDate, roomArgs.startTime, roomArgs.endTime);
-        result = {
-          date: roomArgs.date,
-          timeSlot: `${roomArgs.startTime}–${roomArgs.endTime}`,
-          availableRooms: rooms,
-          count: rooms.length,
-        };
-        break;
-      }
-
-      case TOOLS.GET_TEACHER_WORKLOAD: {
-        const wlArgs = validatedArgs as any;
-        const wlResult = await untisClient.getTeacherWorkload(
-          wlArgs.teacherId,
-          new Date(wlArgs.startDate),
-          new Date(wlArgs.endDate),
-        );
-        result = { teacherId: wlArgs.teacherId, period: `${wlArgs.startDate} – ${wlArgs.endDate}`, ...wlResult };
-        break;
-      }
-
-      case TOOLS.GET_WEEK_OVERVIEW: {
-        const woArgs = validatedArgs as any;
-        const type = woArgs.classId ? 'class' : 'teacher';
-        const id = woArgs.classId ?? woArgs.teacherId;
-        const overview = await untisClient.getWeekOverview(id, type, new Date(woArgs.weekDate));
-        result = { type, id, week: woArgs.weekDate, days: overview };
-        break;
-      }
-
-      case TOOLS.GET_TIMEGRID: {
-        const timegrid = await untisClient.getTimegrid();
-        const dayNames = ['', 'Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
-        result = {
-          timegrid: timegrid.map((day: any) => ({
-            day: day.day,
-            dayName: dayNames[day.day] || '',
-            timeUnits: (day.timeUnits || []).map((unit: any) => ({
-              name: unit.name,
-              startTime: unit.startTime,
-              endTime: unit.endTime,
-              startFormatted: `${String(Math.floor(unit.startTime / 100)).padStart(2, '0')}:${String(unit.startTime % 100).padStart(2, '0')}`,
-              endFormatted: `${String(Math.floor(unit.endTime / 100)).padStart(2, '0')}:${String(unit.endTime % 100).padStart(2, '0')}`,
-            })),
-          })),
-        };
-        break;
-      }
-
-      case TOOLS.FIND_SUBSTITUTE_TEACHERS: {
-        const subArgs = validatedArgs as any;
-        const date = new Date(subArgs.date);
-        const substitutes = await untisClient.findSubstituteTeachers(
-          date,
-          subArgs.startTime,
-          subArgs.endTime,
-          subArgs.subjectName,
-          subArgs.qualificationDays,
-        );
-        result = {
-          date: subArgs.date,
-          timeSlot: `${subArgs.startTime}–${subArgs.endTime}`,
-          subject: subArgs.subjectName,
-          availableTeachers: substitutes,
-          count: substitutes.length,
-        };
-        break;
-      }
-
-      default:
-        result = { error: `Unknown tool: ${name}` };
-    }
-
-    return {
-      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-    };
-  } catch (error) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      ],
-      isError: true,
-    };
   }
-});
+  return users;
+}
 
-// Start server
+function checkMcpUser(users: Map<string, Buffer>, username: string, password: string): boolean {
+  const stored = users.get(username.toLowerCase());
+  if (!stored) return false;
+  const submitted = Buffer.from(password);
+  if (submitted.length !== stored.length) return false;
+  return timingSafeEqual(submitted, stored);
+}
+
 async function main(): Promise<void> {
-  try {
-    await initializeUntis();
-    process.stderr.write('WebUntis client initialized\n');
+  const school = requireEnv('WEBUNTIS_SCHOOL');
+  const baseUrl = requireEnv('WEBUNTIS_BASE_URL');
+  const untisUsername = requireEnv('WEBUNTIS_USERNAME');
+  const untisPassword = requireEnv('WEBUNTIS_PASSWORD');
+  const mcpUsers = parseMcpUsers(requireEnv('MCP_USERS'));
+  const port = parseInt(process.env.PORT || '3000', 10);
+  const timezone = process.env.SCHOOL_TIMEZONE || 'Europe/Zurich';
 
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    process.stderr.write('MCP server running on stdio\n');
-  } catch (error) {
-    process.stderr.write(`Failed to start server: ${error}\n`);
-    process.exit(1);
-  }
+  if (mcpUsers.size === 0) throw new Error('MCP_USERS must define at least one user (format: user1:pass1,user2:pass2)');
+
+  // MCP sessions keyed by access-token hash
+  const mcpSessions = new Map<string, McpSession>();
+
+  // Sweep expired sessions + OAuth store every 10 min
+  const sweepInterval = setInterval(() => {
+    oauthStore.sweep();
+    const cutoff = Date.now() - SESSION_TTL_MS;
+    for (const [k, s] of mcpSessions) {
+      if (s.lastAccess < cutoff) {
+        s.client.logout().catch(() => {});
+        mcpSessions.delete(k);
+      }
+    }
+  }, 10 * 60 * 1000);
+
+  const app = express();
+  app.use(cors());
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
+
+  // ── Health ────────────────────────────────────────────────────────────────
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', school, activeSessions: mcpSessions.size, uptime: Math.floor(process.uptime()) });
+  });
+
+  // ── OAuth Discovery ───────────────────────────────────────────────────────
+
+  // RFC 9728 — Protected Resource Metadata
+  app.get('/.well-known/oauth-protected-resource', (_req, res) => {
+    res.json({
+      resource: MCP_RESOURCE,
+      authorization_servers: [BASE_URL],
+      bearer_methods_supported: ['header'],
+    });
+  });
+
+  // RFC 8414 — Authorization Server Metadata
+  app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+    res.json({
+      issuer: BASE_URL,
+      authorization_endpoint: `${BASE_URL}/oauth/authorize`,
+      token_endpoint: `${BASE_URL}/oauth/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      code_challenge_methods_supported: ['S256'],
+      token_endpoint_auth_methods_supported: ['none'],
+    });
+  });
+
+  // ── OAuth Authorization ───────────────────────────────────────────────────
+
+  // GET — show login form
+  app.get('/oauth/authorize', (req, res) => {
+    const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource } = req.query as Record<string, string>;
+
+    if (response_type !== 'code' || !client_id || !redirect_uri || !code_challenge || !state) {
+      res.status(400).send('Invalid OAuth request');
+      return;
+    }
+
+    res.send(loginPage({ client_id, redirect_uri, code_challenge, code_challenge_method: code_challenge_method || 'S256', state, resource: resource || MCP_RESOURCE }));
+  });
+
+  // POST — validate credentials, issue code, redirect
+  app.post('/oauth/authorize', async (req, res) => {
+    const { username, password, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource } = req.body as Record<string, string>;
+
+    const params = { client_id, redirect_uri, code_challenge, code_challenge_method: code_challenge_method || 'S256', state, resource: resource || MCP_RESOURCE };
+
+    if (!username || !password || !client_id || !redirect_uri || !code_challenge || !state) {
+      res.status(400).send('Missing required parameters');
+      return;
+    }
+
+    if (!checkMcpUser(mcpUsers, username, password)) {
+      res.send(loginPage(params, 'Benutzername oder Passwort ungültig.'));
+      return;
+    }
+
+    const code = generateCode();
+    oauthStore.storeCode(code, {
+      codeChallenge: code_challenge,
+      codeChallengeMethod: code_challenge_method || 'S256',
+      clientId: client_id,
+      redirectUri: redirect_uri,
+      state,
+      mcpUsername: username.toLowerCase(),
+    });
+
+    const redirectUrl = new URL(redirect_uri);
+    redirectUrl.searchParams.set('code', code);
+    redirectUrl.searchParams.set('state', state);
+    res.redirect(redirectUrl.toString());
+  });
+
+  // ── OAuth Token ───────────────────────────────────────────────────────────
+
+  app.post('/oauth/token', (req, res) => {
+    const { grant_type, code, code_verifier, client_id, redirect_uri } = req.body as Record<string, string>;
+
+    if (grant_type !== 'authorization_code') {
+      res.status(400).json({ error: 'unsupported_grant_type' });
+      return;
+    }
+    if (!code || !code_verifier) {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Missing code or code_verifier' });
+      return;
+    }
+
+    const authCode = oauthStore.consumeCode(code);
+    if (!authCode) {
+      res.status(400).json({ error: 'invalid_grant', error_description: 'Code expired or invalid' });
+      return;
+    }
+
+    if (!verifyPkce(code_verifier, authCode.codeChallenge, authCode.codeChallengeMethod)) {
+      res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
+      return;
+    }
+
+    if (redirect_uri && redirect_uri !== authCode.redirectUri) {
+      res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
+      return;
+    }
+
+    if (client_id && client_id !== authCode.clientId) {
+      res.status(400).json({ error: 'invalid_client' });
+      return;
+    }
+
+    const token = generateToken();
+    oauthStore.storeToken(token, {
+      mcpUsername: authCode.mcpUsername,
+      clientId: authCode.clientId,
+    });
+
+    process.stderr.write(`Token issued for ${authCode.clientId} (${authCode.mcpUsername})\n`);
+
+    res.json({
+      access_token: token,
+      token_type: 'Bearer',
+      expires_in: 3600,
+    });
+  });
+
+  // ── MCP Endpoint (/untis) ─────────────────────────────────────────────────
+
+  app.all(MCP_PATH, async (req, res) => {
+    try {
+      const authHeader = req.headers['authorization'] || '';
+      if (!authHeader.startsWith('Bearer ')) {
+        res.setHeader('WWW-Authenticate',
+          `Bearer realm="mcp", resource_metadata="${BASE_URL}/.well-known/oauth-protected-resource"`);
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+
+      const token = authHeader.slice(7);
+      const tokenData = oauthStore.lookupToken(token);
+      if (!tokenData) {
+        res.setHeader('WWW-Authenticate',
+          `Bearer realm="mcp", resource_metadata="${BASE_URL}/.well-known/oauth-protected-resource"`);
+        res.status(401).json({ error: 'Invalid or expired token' });
+        return;
+      }
+
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+
+      // Reuse or create MCP session for this token
+      let session = mcpSessions.get(tokenHash);
+      if (!session) {
+        const client = new UntisClient(timezone);
+        await client.initialize(school, untisUsername, untisPassword, baseUrl);
+        const sessionId = randomUUID();
+        const stack = createMcpStack(client, sessionId);
+        session = { stack, client, lastAccess: Date.now() };
+        mcpSessions.set(tokenHash, session);
+        process.stderr.write(`MCP session created: ${tokenData.clientId} (${tokenData.mcpUsername})\n`);
+      } else {
+        session.lastAccess = Date.now();
+      }
+
+      await handleMcpRequest(session.stack, req, res);
+    } catch (err) {
+      process.stderr.write(`MCP error: ${err}\n`);
+      if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  const httpServer = app.listen(port, '0.0.0.0', () => {
+    process.stderr.write(`untis-mcp listening on :${port} — MCP endpoint: ${MCP_RESOURCE}\n`);
+  });
+
+  const shutdown = async () => {
+    clearInterval(sweepInterval);
+    for (const [, s] of mcpSessions) await s.client.logout().catch(() => {});
+    httpServer.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 30_000);
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
-main();
+main().catch((err) => {
+  process.stderr.write(`Failed to start: ${err}\n`);
+  process.exit(1);
+});

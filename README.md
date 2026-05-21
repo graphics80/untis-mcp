@@ -1,6 +1,39 @@
 # untis-mcp
 
-Model Context Protocol (MCP) server that gives Claude AI read access to WebUntis school scheduling data. Query timetables, find substitute teachers, check room availability, and more — in natural language.
+HTTP MCP server that gives Claude AI read access to WebUntis school scheduling data. Runs as a Docker container behind a reverse proxy. Teachers connect through claude.ai using OAuth — no WebUntis credentials required on their end.
+
+Live at **[https://mcp.it.bzz.ch/untis](https://mcp.it.bzz.ch/untis)** (BZZ Berufsschule Zürich).
+
+For deployment instructions see [DEPLOY.md](DEPLOY.md).
+
+---
+
+## How it works
+
+```
+claude.ai
+    │
+    │  OAuth 2.0 Authorization Code + PKCE
+    │  (teacher logs in with MCP credentials)
+    ▼
+untis-mcp  (Docker, Node.js/TypeScript)
+    │  src/server.ts          — Express HTTP server, OAuth endpoints, MCP endpoint
+    │  src/mcp-handlers.ts    — 20 MCP tool definitions
+    │  src/untis-client.ts    — WebUntis API wrapper with auto-reconnect
+    │  src/http/
+    │    oauth-store.ts       — Auth codes + access tokens (in-memory, TTL'd)
+    │    transport-manager.ts — StreamableHTTP MCP transport
+    │
+    │  WebUntis JSON-RPC (shared service account)
+    ▼
+bzz.webuntis.com
+```
+
+**Auth model:** Teachers authenticate with admin-defined MCP credentials (`MCP_USERS`). Behind the scenes, all WebUntis queries run through a single shared service account. Teachers do not need individual WebUntis logins.
+
+**Sessions:** Each access token gets its own WebUntis session. Sessions live for 1 hour (matching the token TTL) and are swept automatically. WebUntis session expiry is handled transparently with auto-reconnect.
+
+---
 
 ## Tools (20 total)
 
@@ -29,185 +62,44 @@ Model Context Protocol (MCP) server that gives Claude AI read access to WebUntis
 
 ---
 
-## Usage as MCP (Claude Desktop / Claude Code)
+## Environment variables
 
-No install, no clone, no build. Credentials are passed directly via the MCP client config — no `.env` file needed.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `WEBUNTIS_SCHOOL` | Yes | School identifier (e.g. `BZZ`) |
+| `WEBUNTIS_BASE_URL` | Yes | WebUntis server domain (e.g. `bzz.webuntis.com`) |
+| `WEBUNTIS_USERNAME` | Yes | Shared service account username |
+| `WEBUNTIS_PASSWORD` | Yes | Shared service account password |
+| `MCP_USERS` | Yes | Teacher logins: `user1:pass1,user2:pass2` |
+| `BASE_URL` | Yes | Public HTTPS URL of this server (no trailing slash) |
+| `PORT` | No | HTTP port (default: `3000`) |
+| `SCHOOL_TIMEZONE` | No | IANA timezone (default: `Europe/Zurich`) |
 
-### Claude Desktop
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "untis": {
-      "command": "npx",
-      "args": ["-y", "untis-mcp"],
-      "env": {
-        "WEBUNTIS_SCHOOL": "your-school-name",
-        "WEBUNTIS_USERNAME": "your-username",
-        "WEBUNTIS_PASSWORD": "your-password",
-        "WEBUNTIS_BASE_URL": "your-school.webuntis.com",
-        "SCHOOL_TIMEZONE": "Europe/Vienna"
-      }
-    }
-  }
-}
-```
-
-Restart Claude Desktop after saving. `npx` downloads and runs the server automatically on first use.
-
-### Claude Code (CLI)
-
-```bash
-claude mcp add untis -e WEBUNTIS_SCHOOL=your-school -e WEBUNTIS_USERNAME=your-username \
-  -e WEBUNTIS_PASSWORD=your-password -e WEBUNTIS_BASE_URL=your-school.webuntis.com \
-  -- npx -y untis-mcp
-```
-
-### Local development (Claude Desktop)
-
-If you're working on the server itself, point Claude Desktop at your local build instead of the npm package. Run `npm run build` after changes, then restart Claude Desktop.
-
-```json
-{
-  "mcpServers": {
-    "untis": {
-      "command": "node",
-      "args": ["/absolute/path/to/untis_mcp/dist/server.js"],
-      "env": {
-        "WEBUNTIS_SCHOOL": "your-school-name",
-        "WEBUNTIS_USERNAME": "your-username",
-        "WEBUNTIS_PASSWORD": "your-password",
-        "WEBUNTIS_BASE_URL": "your-school.webuntis.com",
-        "SCHOOL_TIMEZONE": "Europe/Vienna"
-      }
-    }
-  }
-}
-```
+See `.env.production.example` for a template.
 
 ---
 
-## Development Setup
-
-### Prerequisites
-
-- Node.js 18+
-- A WebUntis account with API access
-
-### 1. Install dependencies
+## Development
 
 ```bash
 npm install
+npm run build    # compile TypeScript → dist/
+npm start        # run HTTP server (reads .env)
+npm test         # run test suite
 ```
-
-### 2. Configure credentials
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```
-WEBUNTIS_SCHOOL=your-school-name
-WEBUNTIS_USERNAME=your-username
-WEBUNTIS_PASSWORD=your-password
-WEBUNTIS_BASE_URL=your-school.webuntis.com
-SCHOOL_TIMEZONE=Europe/Vienna
-```
-
-> The `.env` file is only used for local development. When running as an MCP server, credentials are injected by the MCP client (see above).
-
-### 3. Build
-
-```bash
-npm run build
-```
-
-### 4. Run locally
-
-```bash
-npm start
-```
-
-The server starts on stdio and waits for MCP messages.
-
-### Dev mode (ts-node, no build step)
-
-```bash
-npm run dev
-```
-
----
-
-## Environment Variables
-
-| Variable | Required | Description | Example |
-|----------|----------|-------------|---------|
-| `WEBUNTIS_SCHOOL` | Yes | School identifier | `BZZ` |
-| `WEBUNTIS_USERNAME` | Yes | WebUntis login | `teacher_username` |
-| `WEBUNTIS_PASSWORD` | Yes | WebUntis password | — |
-| `WEBUNTIS_BASE_URL` | Yes | WebUntis server domain | `bzz.webuntis.com` |
-| `SCHOOL_TIMEZONE` | No | IANA timezone (default: `Europe/Vienna`) | `Europe/Zurich` |
-
----
-
-## Architecture
-
-```
-Claude AI
-    │
-    │ MCP Protocol (stdio)
-    ▼
-MCP Server (Node.js/TypeScript)
-    │  src/server.ts — tool definitions, input validation (Zod), request handling
-    │  src/untis-client.ts — WebUntis API wrapper
-    │  src/types.ts — TypeScript interfaces
-    │
-    │ JSON-RPC
-    ▼
-WebUntis API
-    │
-    ▼
-School Data
-```
-
-**Key design decisions:**
-- All credentials validated at startup — server exits immediately if any are missing
-- Time inputs use WebUntis `Hmm` format (e.g. `800` = 08:00, `1015` = 10:15)
-- Concurrent API calls limited to batches of 5 to avoid overwhelming the server
-- `getExams`, `getHomework`, `getNews` depend on school-side configuration and may return empty results
 
 ---
 
 ## Troubleshooting
 
-**Authentication fails**
-- Verify `WEBUNTIS_BASE_URL` is the correct subdomain for your school (e.g. `bzz.webuntis.com`, not just `webuntis.com`)
-- Confirm the account has API access (contact your Untis administrator)
-
 **`getExams` / `getHomework` / `getNews` return empty**
-- These depend on features being enabled on your school's Untis instance
-- Contact your school IT department to enable data sharing via API
+These depend on features being enabled on your school's Untis instance — contact school IT.
 
 **`findSubstituteTeachers` is slow**
-- It scans `qualificationDays` (default 14) of class timetables to determine subject qualifications
-- Reduce `qualificationDays` for faster results at the cost of accuracy
+It scans `qualificationDays` (default 14) of timetable history. Pass a smaller value for faster results.
 
-**Session timeout**
-- WebUntis sessions expire after ~10 minutes of inactivity
-- The server does not auto-reconnect; restart it if you encounter session errors
-
----
-
-## Security
-
-- Credentials are never hardcoded — always passed via environment variables
-- All tool inputs are validated with Zod schemas before processing
-- Error messages are sanitized (no internal stack traces sent to the MCP client)
-- Never commit `.env` — it's in `.gitignore`
+**Teacher can't log in**
+Check that their username/password appears correctly in `MCP_USERS` in `.env.production` on the server.
 
 ---
 

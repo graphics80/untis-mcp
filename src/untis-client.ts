@@ -4,6 +4,7 @@ export class UntisClient {
   private untis: WebUntis | null = null;
   private timezone: string;
   private credentials: { school: string; username: string; password: string; baseUrl: string } | null = null;
+  private loginPromise: Promise<void> | null = null;
 
   constructor(timezone: string = 'Europe/Vienna') {
     this.timezone = timezone;
@@ -18,13 +19,25 @@ export class UntisClient {
     if (!this.credentials) {
       throw new Error('WebUntis credentials not set. Call initialize() first.');
     }
-    try {
-      const { school, username, password, baseUrl } = this.credentials;
-      this.untis = new WebUntis(school, username, password, baseUrl);
-      await this.untis.login();
-    } catch (error) {
-      throw new Error(`Failed to authenticate with WebUntis: ${error}`);
+    if (this.loginPromise) {
+      return this.loginPromise;
     }
+    this.loginPromise = (async () => {
+      try {
+        const { school, username, password, baseUrl } = this.credentials!;
+        this.untis = new WebUntis(school, username, password, baseUrl);
+        await this.untis.login();
+      } catch (error) {
+        throw new Error(`Failed to authenticate with WebUntis: ${error}`);
+      } finally {
+        this.loginPromise = null;
+      }
+    })();
+    return this.loginPromise;
+  }
+
+  isLoggedIn(): boolean {
+    return this.untis !== null;
   }
 
   private isSessionError(error: unknown): boolean {
