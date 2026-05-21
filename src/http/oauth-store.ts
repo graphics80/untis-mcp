@@ -1,15 +1,5 @@
 import { randomBytes, createHash } from 'crypto';
 
-// Holds claude.ai's OAuth params while the user is at the Microsoft login page
-export interface PendingAuth {
-  codeChallenge: string;
-  codeChallengeMethod: string;
-  clientId: string;
-  redirectUri: string;
-  claudeState: string;
-  expiresAt: number;
-}
-
 export interface AuthCodeData {
   codeChallenge: string;
   codeChallengeMethod: string;
@@ -44,25 +34,8 @@ export function verifyPkce(codeVerifier: string, codeChallenge: string, method: 
 }
 
 class OAuthStore {
-  private pending = new Map<string, PendingAuth>();
   private codes = new Map<string, AuthCodeData>();
   private tokens = new Map<string, TokenData>();
-
-  // ── Pending (in-flight Microsoft login) ────────────────────────────────────
-
-  storePending(msState: string, data: Omit<PendingAuth, 'expiresAt'>): void {
-    this.pending.set(msState, { ...data, expiresAt: Date.now() + 10 * 60 * 1000 });
-  }
-
-  consumePending(msState: string): PendingAuth | null {
-    const data = this.pending.get(msState);
-    if (!data) return null;
-    this.pending.delete(msState);
-    if (Date.now() > data.expiresAt) return null;
-    return data;
-  }
-
-  // ── Auth codes ─────────────────────────────────────────────────────────────
 
   storeCode(code: string, data: Omit<AuthCodeData, 'expiresAt'>): void {
     this.codes.set(sha256hex(code), { ...data, expiresAt: Date.now() + 10 * 60 * 1000 });
@@ -76,8 +49,6 @@ class OAuthStore {
     if (Date.now() > data.expiresAt) return null;
     return data;
   }
-
-  // ── Access tokens ──────────────────────────────────────────────────────────
 
   storeToken(token: string, data: Omit<TokenData, 'expiresAt'>): void {
     this.tokens.set(sha256hex(token), { ...data, expiresAt: Date.now() + 3600 * 1000 });
@@ -98,11 +69,8 @@ class OAuthStore {
     return sha256hex(token);
   }
 
-  // ── Sweep expired entries ──────────────────────────────────────────────────
-
   sweep(): void {
     const now = Date.now();
-    for (const [k, v] of this.pending) if (now > v.expiresAt) this.pending.delete(k);
     for (const [k, v] of this.codes) if (now > v.expiresAt) this.codes.delete(k);
     for (const [k, v] of this.tokens) if (now > v.expiresAt) this.tokens.delete(k);
   }

@@ -29,7 +29,7 @@ untis-mcp  (Docker, Node.js/TypeScript)
 bzz.webuntis.com
 ```
 
-**Auth model:** Teachers log in with their existing **Microsoft O365 school account** via Azure AD. Behind the scenes, all WebUntis queries run through a single shared service account. No extra passwords, no user management — access is controlled entirely through Entra ID.
+**Auth model:** Teachers log in with credentials defined by the admin (`MCP_USERS` env var). Behind the scenes, all WebUntis queries run through a single shared service account. Teachers do not need individual WebUntis logins.
 
 **Sessions:** Each access token gets its own WebUntis session. Sessions live for 1 hour (matching the token TTL) and are swept automatically. WebUntis session expiry is handled transparently with auto-reconnect.
 
@@ -70,9 +70,7 @@ bzz.webuntis.com
 | `WEBUNTIS_BASE_URL` | Yes | WebUntis server domain (e.g. `bzz.webuntis.com`) |
 | `WEBUNTIS_USERNAME` | Yes | Shared service account username |
 | `WEBUNTIS_PASSWORD` | Yes | Shared service account password |
-| `AZURE_AD_CLIENT_ID` | Yes | Azure app client ID |
-| `AZURE_AD_CLIENT_SECRET` | Yes | Azure app client secret |
-| `AZURE_AD_TENANT_ID` | Yes | Azure tenant ID |
+| `MCP_USERS` | Yes | Teacher logins: `user1:pass1,user2:pass2` |
 | `BASE_URL` | Yes | Public HTTPS URL of this server (no trailing slash) |
 | `PORT` | No | HTTP port (default: `3000`) |
 | `SCHOOL_TIMEZONE` | No | IANA timezone (default: `Europe/Zurich`) |
@@ -101,7 +99,7 @@ These depend on features being enabled on your school's Untis instance — conta
 It scans `qualificationDays` (default 14) of timetable history. Pass a smaller value for faster results.
 
 **Teacher can't log in**
-Check that their O365 account is active in Entra ID. If the Azure app has "User assignment required" enabled, verify the teacher has been assigned to the app.
+Check that their entry is correct in `MCP_USERS` in `.env.production` on the server. Remember to restart after any change (`docker compose restart`).
 
 ---
 

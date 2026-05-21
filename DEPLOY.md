@@ -2,7 +2,7 @@
 
 This guide explains how to deploy untis-mcp on a Linux server so teachers can connect through [claude.ai](https://claude.ai) using the "Add custom connector" dialog.
 
-Teachers authenticate with their existing **Microsoft O365 school account** — no extra passwords required.
+Teachers log in with credentials you define — no WebUntis credentials required on their end.
 
 ## Prerequisites
 
@@ -10,35 +10,11 @@ Teachers authenticate with their existing **Microsoft O365 school account** — 
 - Docker and Docker Compose installed
 - Apache2 or Nginx with a valid TLS certificate (Let's Encrypt works fine)
 - A WebUntis service account with API access
-- An Azure AD app registration (see step 1)
 - Git
 
 ---
 
-## 1. Configure Azure AD (Microsoft Entra ID)
-
-You need an Azure AD app registration. If your school already has one for another app, you can reuse it — just add the new redirect URI.
-
-### Add the redirect URI
-
-In the [Azure portal](https://portal.azure.com) → App registrations → your app → **Authentication**:
-
-- Add a **Web** redirect URI: `https://mcp.your-school.example.com/oauth/microsoft/callback`
-
-That's all — client ID, secret, and tenant ID stay the same.
-
-### Create a new app registration (if you don't have one)
-
-1. Azure portal → App registrations → **New registration**
-2. Name: `untis-mcp` (or similar)
-3. Supported account types: **Accounts in this organizational directory only** (single tenant — restricts to your school)
-4. Redirect URI: Web → `https://mcp.your-school.example.com/oauth/microsoft/callback`
-5. After creation, go to **Certificates & secrets** → New client secret → copy the value immediately
-6. Note the **Application (client) ID** and **Directory (tenant) ID** from the Overview page
-
----
-
-## 2. Create a deployment user
+## 1. Create a deployment user
 
 Run as root:
 
@@ -55,7 +31,7 @@ su - mcp
 
 ---
 
-## 3. Clone the repository
+## 2. Clone the repository
 
 ```bash
 git clone https://github.com/graphics80/untis-mcp.git
@@ -64,7 +40,7 @@ cd untis-mcp
 
 ---
 
-## 4. Create the environment file
+## 3. Create the environment file
 
 ```bash
 cp .env.production.example .env.production
@@ -74,6 +50,7 @@ nano .env.production
 Fill in all values:
 
 ```env
+# Shared WebUntis service account
 WEBUNTIS_SCHOOL=BZZ
 WEBUNTIS_BASE_URL=bzz.webuntis.com
 WEBUNTIS_USERNAME=your_service_account
@@ -81,10 +58,11 @@ WEBUNTIS_PASSWORD=your_password
 
 SCHOOL_TIMEZONE=Europe/Zurich
 
-AZURE_AD_CLIENT_ID=21c25dd0-...
-AZURE_AD_CLIENT_SECRET=your_client_secret
-AZURE_AD_TENANT_ID=12ea5aa9-...
+# Teacher accounts — you define these, teachers use them to log in via claude.ai
+# Format: username:password,username:password
+MCP_USERS=lehmann:secretpass,mueller:otherpass
 
+# Public HTTPS URL of this server (no trailing slash)
 BASE_URL=https://mcp.your-school.example.com
 
 PORT=3001
@@ -94,7 +72,7 @@ Keep `.env.production` private — never commit it.
 
 ---
 
-## 5. Start the container
+## 4. Start the container
 
 ```bash
 docker compose up -d --build
@@ -111,7 +89,7 @@ Expected: `{"status":"ok","school":"BZZ","activeSessions":0,"uptime":...}`
 
 ---
 
-## 6. Configure the reverse proxy
+## 5. Configure the reverse proxy
 
 The container only listens on `127.0.0.1:3001` and must be fronted by Apache or Nginx with TLS.
 
@@ -195,7 +173,7 @@ server {
 
 ---
 
-## 7. Verify the deployment
+## 6. Verify the deployment
 
 ```bash
 # Health check
@@ -211,23 +189,34 @@ curl -si https://mcp.your-school.example.com/untis -X POST \
 
 ---
 
-## 8. Connect in claude.ai
+## 7. Connect in claude.ai
 
 1. Open [claude.ai](https://claude.ai) → Settings → Integrations
 2. Click **Add custom connector**
 3. Enter the MCP URL: `https://mcp.your-school.example.com/untis`
-4. Click **Connect** — claude.ai redirects to the Microsoft login page
-5. Teacher logs in with their school O365 account
+4. Click **Connect** — claude.ai redirects to the login form
+5. Teacher enters the username and password you defined in `MCP_USERS`
 6. Done — the Untis tools are now available in Claude
 
-Each teacher repeats steps 1–6 with their own O365 account.
+Each teacher repeats steps 1–6 with their own credentials.
 
-### Access control
+---
 
-Access is controlled by the Azure AD app:
-- **Single-tenant app** (recommended): only accounts from your school's tenant can log in — no configuration needed per teacher
-- **To block specific users**: disable their O365 account in Entra ID (access is revoked immediately)
-- **To restrict to a subset**: enable **User assignment required** on the app in Azure portal → Enterprise Applications, then assign only the teachers you want
+## Managing teacher accounts
+
+Edit `.env.production` on the server and restart the container:
+
+```bash
+nano /home/mcp/untis-mcp/.env.production
+# Edit MCP_USERS=...
+
+docker compose restart   # no rebuild needed
+```
+
+- **Add a teacher**: append `,name:password` to `MCP_USERS`
+- **Remove a teacher**: delete their entry and restart — their token expires within 1 hour
+- **Change a password**: update their entry and restart
+- Usernames are case-insensitive
 
 ---
 
@@ -269,4 +258,4 @@ docker compose down
 - Each teacher gets their own WebUntis session (one per access token), expires after 1 hour
 - WebUntis session expiry is handled transparently with auto-reconnect
 - The container runs as a non-root `node` user
-- Single-tenant Azure AD ensures only your school's accounts can authenticate
+- Password comparison uses `timingSafeEqual` to prevent timing attacks
