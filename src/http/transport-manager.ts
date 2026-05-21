@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Request, Response } from 'express';
@@ -10,9 +9,9 @@ export interface McpStack {
   transport: StreamableHTTPServerTransport;
 }
 
-export function createMcpStack(untisClient: UntisClient): McpStack {
+export function createMcpStack(untisClient: UntisClient, sessionId: string): McpStack {
   const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
+    sessionIdGenerator: () => sessionId,
   });
 
   const server = new Server(
