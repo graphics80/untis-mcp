@@ -64,7 +64,7 @@ function loginPage(params: Record<string, string>, error?: string): string {
   ${error ? `<div class="err">${h(error)}</div>` : ''}
   <form method="POST" action="/oauth/authorize">
     <label for="u">Benutzername</label>
-    <input type="text" id="u" name="username" required autocomplete="username" placeholder="vorname.nachname">
+    <input type="text" id="u" name="username" required autocomplete="username" placeholder="Benutzername">
     <label for="p">Passwort</label>
     <input type="password" id="p" name="password" required autocomplete="current-password" placeholder="Passwort">
     ${hidden}
