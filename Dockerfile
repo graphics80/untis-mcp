@@ -14,9 +14,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /build/dist ./dist
-EXPOSE 3000
+EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:3000/health || exit 1
+  CMD wget -qO- http://localhost:3001/health || exit 1
 USER node
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/server.js"]
