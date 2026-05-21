@@ -10,10 +10,7 @@ import {
   RoomResponse,
 } from './types.js';
 
-export function registerHandlers(server: Server, untisClient: UntisClient): void {
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: [
+const TOOL_LIST = [
         {
           name: TOOLS.GET_TIMETABLE,
           description: 'Get timetable for a class, teacher, or room',
@@ -201,9 +198,10 @@ export function registerHandlers(server: Server, untisClient: UntisClient): void
             required: ['date', 'startTime', 'endTime', 'subjectName'],
           },
         },
-      ],
-    };
-  });
+];
+
+export function registerHandlers(server: Server, untisClient: UntisClient): void {
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_LIST }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
@@ -307,13 +305,9 @@ export function registerHandlers(server: Server, untisClient: UntisClient): void
         }
 
         case TOOLS.GET_ABSENCES: {
-          const startDate = (args as any).startDate ? new Date((args as any).startDate as string) : undefined;
-          const endDate = (args as any).endDate ? new Date((args as any).endDate as string) : undefined;
-
-          if (!startDate || !endDate) {
-            throw new Error('startDate and endDate are required');
-          }
-
+          const { startDate: startDateStr, endDate: endDateStr } = validatedArgs as any;
+          const startDate = new Date(startDateStr);
+          const endDate = new Date(endDateStr);
           const absences = await untisClient.getAbsences(startDate, endDate);
           result = {
             absences: absences.absences?.map((absence: any) => ({

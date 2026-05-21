@@ -68,6 +68,44 @@ export class UntisClient {
     return this.untis;
   }
 
+  // Returns true if the lesson occupies any part of [startTime, endTime)
+  private isLessonInSlot(lesson: any, startTime: number, endTime: number): boolean {
+    return lesson.code !== 'cancelled' && lesson.startTime < endTime && lesson.endTime > startTime;
+  }
+
+  // Process items in batches, collect non-null results
+  private async batchMap<T, R>(items: T[], fn: (item: T) => Promise<R | null>, limit = 5): Promise<R[]> {
+    const results: R[] = [];
+    for (let i = 0; i < items.length; i += limit) {
+      const batch = await Promise.all(items.slice(i, i + limit).map(fn));
+      for (const r of batch) if (r !== null) results.push(r);
+    }
+    return results;
+  }
+
+  // Convert Untis integer date (YYYYMMDD) to ISO string (YYYY-MM-DD)
+  private static untisDateToISO(date: number): string {
+    const ds = String(date);
+    return `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6, 8)}`;
+  }
+
+  // Convert JS Date to ISO date string using local date fields (not UTC)
+  private static jsDateToISO(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // DST-aware UTC offset for this.timezone at the given instant
+  private tzOffset(d: Date): string {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: this.timezone,
+      timeZoneName: 'shortOffset',
+    }).formatToParts(d);
+    const raw = parts.find(p => p.type === 'timeZoneName')?.value ?? 'GMT+0';
+    const match = raw.match(/([+-])(\d{1,2})(?::(\d{2}))?$/);
+    if (!match) return '+00:00';
+    return `${match[1]}${match[2].padStart(2, '0')}:${match[3] ?? '00'}`;
+  }
+
   private async fetchTimetable(elementId: number, elementType: WebUntisElementType, startDate?: Date, endDate?: Date): Promise<any[]> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
@@ -159,49 +197,31 @@ export class UntisClient {
       try {
         const teachers = await client.getTeachers() || [];
         const subjectMap: Record<string, Set<string>> = {};
-
-        teachers.forEach((teacher: any) => {
-          subjectMap[teacher.name] = new Set();
-        });
+        teachers.forEach((teacher: any) => { subjectMap[teacher.name] = new Set(); });
 
         const endDate = new Date();
         const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
         const classes = await client.getClasses(true, undefined as unknown as number) || [];
 
-        const concurrencyLimit = 5;
-        for (let i = 0; i < classes.length; i += concurrencyLimit) {
-          const batch = classes.slice(i, i + concurrencyLimit);
-          const promises = batch.map(classItem =>
-            client.getTimetableForRange(startDate, endDate, classItem.id, WebUntisElementType.CLASS)
-              .catch(() => null)
-          );
-
-          const timetables = await Promise.all(promises);
-
-          timetables.forEach((timetable) => {
-            if (!timetable || !Array.isArray(timetable)) return;
-
-            timetable.forEach((lesson: any) => {
-              if (!lesson.te?.length || !lesson.su?.length) return;
-
-              lesson.te.forEach((teacher: any) => {
-                lesson.su.forEach((subject: any) => {
-                  if (subjectMap[teacher.name]) {
-                    subjectMap[teacher.name].add(subject.name);
-                  }
-                });
-              });
-            });
-          });
-        }
-
-        const result: Record<string, string[]> = {};
-        Object.entries(subjectMap).forEach(([teacher, subjects]) => {
-          if (subjects.size > 0) {
-            result[teacher] = Array.from(subjects).sort();
+        await this.batchMap(classes, async (classItem: any) => {
+          const timetable = await client.getTimetableForRange(startDate, endDate, classItem.id, WebUntisElementType.CLASS)
+            .catch(() => null);
+          if (!timetable || !Array.isArray(timetable)) return null;
+          for (const lesson of timetable) {
+            if (!lesson.te?.length || !lesson.su?.length) continue;
+            for (const teacher of lesson.te) {
+              for (const subject of lesson.su) {
+                if (subjectMap[teacher.name]) subjectMap[teacher.name].add(subject.name);
+              }
+            }
           }
+          return true;
         });
 
+        const result: Record<string, string[]> = {};
+        for (const [teacher, subjects] of Object.entries(subjectMap)) {
+          if (subjects.size > 0) result[teacher] = Array.from(subjects).sort();
+        }
         return result;
       } catch (error) {
         throw new Error(`Failed to fetch teacher subjects: ${error}`);
@@ -230,9 +250,10 @@ export class UntisClient {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
 
+      // Single getTeachers() call shared by both subject-map building and the result
       const [teacherSubjects, allTeachers] = await Promise.all([
         this.getTeacherSubjects(qualificationDays),
-        client.getTeachers(),
+        this.getTeachers(),
       ]);
 
       const subjectLower = subjectName.toLowerCase();
@@ -245,36 +266,19 @@ export class UntisClient {
 
       if (qualifiedTeachers.length === 0) return [];
 
-      const results: Array<{ id: number; name: string; longName: string; teachesSubjectToday: boolean }> = [];
-      const concurrencyLimit = 5;
-
-      for (let i = 0; i < qualifiedTeachers.length; i += concurrencyLimit) {
-        const batch = qualifiedTeachers.slice(i, i + concurrencyLimit);
-        const batchResults = await Promise.all(
-          batch.map(async (teacher: any) => {
-            try {
-              const timetable = await client.getTimetableFor(date, teacher.id, WebUntisElementType.TEACHER);
-              const isBusy = timetable.some(
-                (lesson: any) =>
-                  lesson.code !== 'cancelled' &&
-                  lesson.startTime < endTime &&
-                  lesson.endTime > startTime,
-              );
-              if (isBusy) return null;
-
-              const teachesSubjectToday = timetable.some(
-                (lesson: any) =>
-                  lesson.code !== 'cancelled' &&
-                  (lesson.su as any[])?.some((s: any) => s.name?.toLowerCase().includes(subjectLower)),
-              );
-              return { id: teacher.id, name: teacher.name, longName: teacher.longName || '', teachesSubjectToday };
-            } catch {
-              return null;
-            }
-          }),
-        );
-        batchResults.forEach((r) => { if (r) results.push(r); });
-      }
+      const results = await this.batchMap(qualifiedTeachers, async (teacher: any) => {
+        try {
+          const timetable = await client.getTimetableFor(date, teacher.id, WebUntisElementType.TEACHER);
+          if (timetable.some((l: any) => this.isLessonInSlot(l, startTime, endTime))) return null;
+          const teachesSubjectToday = timetable.some(
+            (l: any) => l.code !== 'cancelled' &&
+              (l.su as any[])?.some((s: any) => s.name?.toLowerCase().includes(subjectLower)),
+          );
+          return { id: teacher.id, name: teacher.name, longName: teacher.longName || '', teachesSubjectToday };
+        } catch {
+          return null;
+        }
+      });
 
       return results.sort((a, b) => {
         if (a.teachesSubjectToday !== b.teachesSubjectToday) return a.teachesSubjectToday ? -1 : 1;
@@ -326,12 +330,7 @@ export class UntisClient {
       const client = this.ensureClient();
       try {
         const timetable = await client.getTimetableFor(date, teacherId, WebUntisElementType.TEACHER);
-        const conflicts = timetable.filter(
-          (lesson: any) =>
-            lesson.code !== 'cancelled' &&
-            lesson.startTime < endTime &&
-            lesson.endTime > startTime,
-        );
+        const conflicts = timetable.filter((l: any) => this.isLessonInSlot(l, startTime, endTime));
         return {
           available: conflicts.length === 0,
           conflictingLessons: conflicts.map((lesson: any) => ({
@@ -357,30 +356,16 @@ export class UntisClient {
       const client = this.ensureClient();
       try {
         const rooms = await client.getRooms();
-        const available: Array<{ id: number; name: string; longName: string }> = [];
-        const concurrencyLimit = 5;
-
-        for (let i = 0; i < rooms.length; i += concurrencyLimit) {
-          const batch = rooms.slice(i, i + concurrencyLimit);
-          const results = await Promise.all(
-            batch.map(async (room: any) => {
-              try {
-                const timetable = await client.getTimetableFor(date, room.id, WebUntisElementType.ROOM);
-                const isBusy = timetable.some(
-                  (lesson: any) =>
-                    lesson.code !== 'cancelled' &&
-                    lesson.startTime < endTime &&
-                    lesson.endTime > startTime,
-                );
-                return isBusy ? null : { id: room.id, name: room.name, longName: room.longName || '' };
-              } catch {
-                return null;
-              }
-            }),
-          );
-          results.forEach((r) => { if (r) available.push(r); });
-        }
-
+        const available = await this.batchMap(rooms, async (room: any) => {
+          try {
+            const timetable = await client.getTimetableFor(date, room.id, WebUntisElementType.ROOM);
+            return timetable.some((l: any) => this.isLessonInSlot(l, startTime, endTime))
+              ? null
+              : { id: room.id, name: room.name, longName: room.longName || '' };
+          } catch {
+            return null;
+          }
+        });
         return available.sort((a, b) => a.name.localeCompare(b.name));
       } catch (error) {
         throw new Error(`Failed to find available rooms: ${error}`);
@@ -404,15 +389,10 @@ export class UntisClient {
         for (const lesson of timetable) {
           if (lesson.code === 'cancelled') continue;
           totalLessons++;
-
-          const ds = String(lesson.date);
-          const dateKey = `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6, 8)}`;
+          const dateKey = UntisClient.untisDateToISO(lesson.date);
           byDate[dateKey] = (byDate[dateKey] || 0) + 1;
-
           const subjects: string[] = (lesson.su as any[])?.map((s: any) => s.name).filter(Boolean) || ['Unknown'];
-          for (const subj of subjects) {
-            bySubject[subj] = (bySubject[subj] || 0) + 1;
-          }
+          for (const subj of subjects) bySubject[subj] = (bySubject[subj] || 0) + 1;
         }
 
         return { totalLessons, bySubject, byDate };
@@ -431,9 +411,8 @@ export class UntisClient {
       const client = this.ensureClient();
       try {
         const dow = weekDate.getDay();
-        const mondayOffset = dow === 0 ? -6 : 1 - dow;
         const monday = new Date(weekDate);
-        monday.setDate(weekDate.getDate() + mondayOffset);
+        monday.setDate(weekDate.getDate() + (dow === 0 ? -6 : 1 - dow));
         const friday = new Date(monday);
         friday.setDate(monday.getDate() + 4);
 
@@ -442,9 +421,8 @@ export class UntisClient {
 
         const byDate: Record<string, any[]> = {};
         for (const lesson of timetable) {
-          const ds = String(lesson.date);
-          byDate[ds] = byDate[ds] || [];
-          byDate[ds].push({
+          const key = String(lesson.date);
+          (byDate[key] ??= []).push({
             startTime: lesson.startTime,
             endTime: lesson.endTime,
             subject: (lesson.su as any[])?.[0]?.name || '',
@@ -460,8 +438,8 @@ export class UntisClient {
         return Array.from({ length: 5 }, (_, i) => {
           const d = new Date(monday);
           d.setDate(monday.getDate() + i);
-          const untisKey = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-          const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const isoDate = UntisClient.jsDateToISO(d);
+          const untisKey = isoDate.replace(/-/g, '');
           const lessons = (byDate[untisKey] || []).sort((a: any, b: any) => a.startTime - b.startTime);
           return { day: dayNames[i], date: isoDate, lessons };
         });
@@ -524,7 +502,7 @@ export class UntisClient {
       try {
         await this.untis.logout();
       } catch (error) {
-        console.error('Error during logout:', error);
+        process.stderr.write(`Error during logout: ${error}\n`);
       }
       this.untis = null;
     }
@@ -533,15 +511,9 @@ export class UntisClient {
   formatTimeToISO(untisTime: number, date: number): string {
     const hours = Math.floor(untisTime / 100);
     const minutes = untisTime % 100;
-
-    const year = Math.floor(date / 10000);
-    const month = Math.floor((date % 10000) / 100);
-    const day = date % 100;
-
-    const isoDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const isoDate = UntisClient.untisDateToISO(date);
     const timeStr = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-    const offset = this.timezone === 'Europe/Vienna' ? '+01:00' : '+02:00';
-
-    return `${isoDate}T${timeStr}${offset}`;
+    const jsDate = new Date(`${isoDate}T${timeStr}`);
+    return `${isoDate}T${timeStr}${this.tzOffset(jsDate)}`;
   }
 }

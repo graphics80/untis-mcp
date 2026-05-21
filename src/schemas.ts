@@ -24,6 +24,7 @@ export const TOOLS = {
 } as const;
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format');
+export const hmmTimeSchema = z.number().int().min(0).max(2359);
 
 export const toolSchemas = {
   [TOOLS.GET_TIMETABLE]: z.object({
@@ -54,13 +55,13 @@ export const toolSchemas = {
   [TOOLS.CHECK_TEACHER_AVAILABILITY]: z.object({
     teacherId: z.number().int(),
     date: dateSchema,
-    startTime: z.number().int().min(0).max(2359),
-    endTime: z.number().int().min(0).max(2359),
+    startTime: hmmTimeSchema,
+    endTime: hmmTimeSchema,
   }),
   [TOOLS.FIND_AVAILABLE_ROOMS]: z.object({
     date: dateSchema,
-    startTime: z.number().int().min(0).max(2359),
-    endTime: z.number().int().min(0).max(2359),
+    startTime: hmmTimeSchema,
+    endTime: hmmTimeSchema,
   }),
   [TOOLS.GET_TEACHER_WORKLOAD]: z.object({
     teacherId: z.number().int(),
@@ -87,8 +88,8 @@ export const toolSchemas = {
   }),
   [TOOLS.FIND_SUBSTITUTE_TEACHERS]: z.object({
     date: dateSchema,
-    startTime: z.number().int().min(0).max(2359),
-    endTime: z.number().int().min(0).max(2359),
+    startTime: hmmTimeSchema,
+    endTime: hmmTimeSchema,
     subjectName: z.string().min(1),
     qualificationDays: z.number().int().min(1).max(90).optional().default(14),
   }),

@@ -1,5 +1,8 @@
 import { randomBytes, createHash } from 'crypto';
 
+const CODE_TTL_MS = 10 * 60 * 1000;   // 10 min
+const TOKEN_TTL_MS = 60 * 60 * 1000;  // 1 h — must match SESSION_TTL_MS in server.ts
+
 export interface AuthCodeData {
   codeChallenge: string;
   codeChallengeMethod: string;
@@ -38,7 +41,7 @@ class OAuthStore {
   private tokens = new Map<string, TokenData>();
 
   storeCode(code: string, data: Omit<AuthCodeData, 'expiresAt'>): void {
-    this.codes.set(sha256hex(code), { ...data, expiresAt: Date.now() + 10 * 60 * 1000 });
+    this.codes.set(sha256hex(code), { ...data, expiresAt: Date.now() + CODE_TTL_MS });
   }
 
   consumeCode(code: string): AuthCodeData | null {
@@ -51,7 +54,7 @@ class OAuthStore {
   }
 
   storeToken(token: string, data: Omit<TokenData, 'expiresAt'>): void {
-    this.tokens.set(sha256hex(token), { ...data, expiresAt: Date.now() + 3600 * 1000 });
+    this.tokens.set(sha256hex(token), { ...data, expiresAt: Date.now() + TOKEN_TTL_MS });
   }
 
   lookupToken(token: string): TokenData | null {

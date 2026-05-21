@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomUUID, createHash, timingSafeEqual } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
@@ -180,14 +180,11 @@ async function main(): Promise<void> {
 
   // POST — validate credentials, issue code, redirect
   app.post('/oauth/authorize', (req, res) => {
-    const { username, password, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource } =
+    const { username, password, client_id, redirect_uri, code_challenge, state, resource } =
       req.body as Record<string, string>;
+    const ccm = (req.body as Record<string, string>).code_challenge_method || 'S256';
 
-    const params = {
-      client_id, redirect_uri, code_challenge,
-      code_challenge_method: code_challenge_method || 'S256',
-      state, resource: resource || MCP_RESOURCE,
-    };
+    const params = { client_id, redirect_uri, code_challenge, code_challenge_method: ccm, state, resource: resource || MCP_RESOURCE };
 
     if (!username || !password || !client_id || !redirect_uri || !code_challenge || !state) {
       res.status(400).send('Missing required parameters');
@@ -202,7 +199,7 @@ async function main(): Promise<void> {
     const code = generateCode();
     oauthStore.storeCode(code, {
       codeChallenge: code_challenge,
-      codeChallengeMethod: code_challenge_method || 'S256',
+      codeChallengeMethod: ccm,
       clientId: client_id,
       redirectUri: redirect_uri,
       mcpUsername: username.toLowerCase(),
@@ -267,12 +264,13 @@ async function main(): Promise<void> {
 
   // ── MCP Endpoint (/untis) ─────────────────────────────────────────────────
 
+  const WWW_AUTHENTICATE = `Bearer realm="mcp", resource_metadata="${BASE_URL}/.well-known/oauth-protected-resource"`;
+
   app.all(MCP_PATH, async (req, res) => {
     try {
       const authHeader = req.headers['authorization'] || '';
       if (!authHeader.startsWith('Bearer ')) {
-        res.setHeader('WWW-Authenticate',
-          `Bearer realm="mcp", resource_metadata="${BASE_URL}/.well-known/oauth-protected-resource"`);
+        res.setHeader('WWW-Authenticate', WWW_AUTHENTICATE);
         res.status(401).json({ error: 'Authentication required' });
         return;
       }
@@ -280,13 +278,12 @@ async function main(): Promise<void> {
       const token = authHeader.slice(7);
       const tokenData = oauthStore.lookupToken(token);
       if (!tokenData) {
-        res.setHeader('WWW-Authenticate',
-          `Bearer realm="mcp", resource_metadata="${BASE_URL}/.well-known/oauth-protected-resource"`);
+        res.setHeader('WWW-Authenticate', WWW_AUTHENTICATE);
         res.status(401).json({ error: 'Invalid or expired token' });
         return;
       }
 
-      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const tokenHash = oauthStore.tokenHash(token);
 
       // Reuse or create MCP session for this token
       let session = mcpSessions.get(tokenHash);
@@ -315,7 +312,7 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     clearInterval(sweepInterval);
-    for (const [, s] of mcpSessions) await s.client.logout().catch(() => {});
+    await Promise.all([...mcpSessions.values()].map(s => s.client.logout().catch(() => {})));
     httpServer.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 30_000);
   };
