@@ -6,14 +6,12 @@ export interface AuthCodeData {
   clientId: string;
   redirectUri: string;
   state: string;
-  username: string;
-  password: string;
+  mcpUsername: string;
   expiresAt: number;
 }
 
 export interface TokenData {
-  username: string;
-  password: string;
+  mcpUsername: string;
   clientId: string;
   expiresAt: number;
 }

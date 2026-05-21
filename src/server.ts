@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
@@ -60,10 +60,10 @@ function loginPage(params: Record<string, string>, error?: string): string {
 <div class="card">
   <h1>Untis MCP</h1>
   <span class="badge">BZZ Berufsschule Zürich</span>
-  <p class="sub">Melde dich mit deinen WebUntis-Zugangsdaten an, um Stundenplan-Daten in Claude zu nutzen.</p>
+  <p class="sub">Melde dich mit deinen Zugangsdaten an, um Stundenplan-Daten in Claude zu nutzen.</p>
   ${error ? `<div class="err">${h(error)}</div>` : ''}
   <form method="POST" action="/oauth/authorize">
-    <label for="u">WebUntis-Benutzername</label>
+    <label for="u">Benutzername</label>
     <input type="text" id="u" name="username" required autocomplete="username" placeholder="vorname.nachname">
     <label for="p">Passwort</label>
     <input type="password" id="p" name="password" required autocomplete="current-password" placeholder="Passwort">
@@ -75,11 +75,38 @@ function loginPage(params: Record<string, string>, error?: string): string {
 </html>`;
 }
 
+function parseMcpUsers(raw: string): Map<string, Buffer> {
+  const users = new Map<string, Buffer>();
+  for (const pair of raw.split(',')) {
+    const colon = pair.indexOf(':');
+    if (colon < 1) continue;
+    const username = pair.slice(0, colon).trim();
+    const password = pair.slice(colon + 1).trim();
+    if (username && password) {
+      users.set(username.toLowerCase(), Buffer.from(password));
+    }
+  }
+  return users;
+}
+
+function checkMcpUser(users: Map<string, Buffer>, username: string, password: string): boolean {
+  const stored = users.get(username.toLowerCase());
+  if (!stored) return false;
+  const submitted = Buffer.from(password);
+  if (submitted.length !== stored.length) return false;
+  return timingSafeEqual(submitted, stored);
+}
+
 async function main(): Promise<void> {
   const school = requireEnv('WEBUNTIS_SCHOOL');
   const baseUrl = requireEnv('WEBUNTIS_BASE_URL');
+  const untisUsername = requireEnv('WEBUNTIS_USERNAME');
+  const untisPassword = requireEnv('WEBUNTIS_PASSWORD');
+  const mcpUsers = parseMcpUsers(requireEnv('MCP_USERS'));
   const port = parseInt(process.env.PORT || '3000', 10);
   const timezone = process.env.SCHOOL_TIMEZONE || 'Europe/Zurich';
+
+  if (mcpUsers.size === 0) throw new Error('MCP_USERS must define at least one user (format: user1:pass1,user2:pass2)');
 
   // MCP sessions keyed by access-token hash
   const mcpSessions = new Map<string, McpSession>();
@@ -155,12 +182,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Validate WebUntis credentials
-    const client = new UntisClient(timezone);
-    try {
-      await client.initialize(school, username, password, baseUrl);
-      await client.logout();
-    } catch {
+    if (!checkMcpUser(mcpUsers, username, password)) {
       res.send(loginPage(params, 'Benutzername oder Passwort ungültig.'));
       return;
     }
@@ -172,8 +194,7 @@ async function main(): Promise<void> {
       clientId: client_id,
       redirectUri: redirect_uri,
       state,
-      username,
-      password,
+      mcpUsername: username.toLowerCase(),
     });
 
     const redirectUrl = new URL(redirect_uri);
@@ -219,12 +240,11 @@ async function main(): Promise<void> {
 
     const token = generateToken();
     oauthStore.storeToken(token, {
-      username: authCode.username,
-      password: authCode.password,
+      mcpUsername: authCode.mcpUsername,
       clientId: authCode.clientId,
     });
 
-    process.stderr.write(`Token issued for ${authCode.clientId} (${authCode.username})\n`);
+    process.stderr.write(`Token issued for ${authCode.clientId} (${authCode.mcpUsername})\n`);
 
     res.json({
       access_token: token,
@@ -260,12 +280,12 @@ async function main(): Promise<void> {
       let session = mcpSessions.get(tokenHash);
       if (!session) {
         const client = new UntisClient(timezone);
-        await client.initialize(school, tokenData.username, tokenData.password, baseUrl);
+        await client.initialize(school, untisUsername, untisPassword, baseUrl);
         const sessionId = randomUUID();
         const stack = createMcpStack(client, sessionId);
         session = { stack, client, lastAccess: Date.now() };
         mcpSessions.set(tokenHash, session);
-        process.stderr.write(`MCP session created: ${tokenData.clientId} (${tokenData.username})\n`);
+        process.stderr.write(`MCP session created: ${tokenData.clientId} (${tokenData.mcpUsername})\n`);
       } else {
         session.lastAccess = Date.now();
       }
