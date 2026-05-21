@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomUUID, createHash, timingSafeEqual } from 'crypto';
+import { randomUUID, createHash, randomBytes } from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
@@ -27,86 +27,19 @@ interface McpSession {
 
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1h — matches token TTL
 
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function loginPage(params: Record<string, string>, error?: string): string {
-  const h = escHtml;
-  const fields = ['client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'state', 'resource'];
-  const hidden = fields.map(f => `<input type="hidden" name="${f}" value="${h(params[f] ?? '')}">`).join('\n');
-  return `<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Untis MCP – Anmelden</title>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:system-ui,sans-serif;background:#f0f0f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-    .card{background:#fff;border-radius:12px;padding:32px;width:100%;max-width:380px;box-shadow:0 2px 16px rgba(0,0,0,.1)}
-    h1{font-size:1.25rem;margin-bottom:6px;color:#111}
-    .sub{color:#666;font-size:.875rem;margin-bottom:24px;line-height:1.4}
-    label{display:block;font-size:.8rem;color:#555;margin-bottom:3px;font-weight:500}
-    input[type=text],input[type=password]{width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:.95rem;margin-bottom:14px;outline:none;transition:border .15s}
-    input:focus{border-color:#111}
-    button{width:100%;padding:10px;background:#111;color:#fff;border:none;border-radius:6px;font-size:.95rem;cursor:pointer;margin-top:6px;font-weight:500}
-    button:hover{background:#333}
-    .err{background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;padding:9px 12px;border-radius:6px;font-size:.875rem;margin-bottom:16px}
-    .badge{display:inline-block;background:#f3f4f6;color:#374151;font-size:.75rem;padding:2px 8px;border-radius:99px;margin-bottom:20px}
-  </style>
-</head>
-<body>
-<div class="card">
-  <h1>Untis MCP</h1>
-  <span class="badge">BZZ Berufsschule Zürich</span>
-  <p class="sub">Melde dich mit deinen Zugangsdaten an, um Stundenplan-Daten in Claude zu nutzen.</p>
-  ${error ? `<div class="err">${h(error)}</div>` : ''}
-  <form method="POST" action="/oauth/authorize">
-    <label for="u">Benutzername</label>
-    <input type="text" id="u" name="username" required autocomplete="username" placeholder="vorname.nachname">
-    <label for="p">Passwort</label>
-    <input type="password" id="p" name="password" required autocomplete="current-password" placeholder="Passwort">
-    ${hidden}
-    <button type="submit">Anmelden &amp; Verbinden</button>
-  </form>
-</div>
-</body>
-</html>`;
-}
-
-function parseMcpUsers(raw: string): Map<string, Buffer> {
-  const users = new Map<string, Buffer>();
-  for (const pair of raw.split(',')) {
-    const colon = pair.indexOf(':');
-    if (colon < 1) continue;
-    const username = pair.slice(0, colon).trim();
-    const password = pair.slice(colon + 1).trim();
-    if (username && password) {
-      users.set(username.toLowerCase(), Buffer.from(password));
-    }
-  }
-  return users;
-}
-
-function checkMcpUser(users: Map<string, Buffer>, username: string, password: string): boolean {
-  const stored = users.get(username.toLowerCase());
-  if (!stored) return false;
-  const submitted = Buffer.from(password);
-  if (submitted.length !== stored.length) return false;
-  return timingSafeEqual(submitted, stored);
-}
-
 async function main(): Promise<void> {
   const school = requireEnv('WEBUNTIS_SCHOOL');
   const baseUrl = requireEnv('WEBUNTIS_BASE_URL');
   const untisUsername = requireEnv('WEBUNTIS_USERNAME');
   const untisPassword = requireEnv('WEBUNTIS_PASSWORD');
-  const mcpUsers = parseMcpUsers(requireEnv('MCP_USERS'));
+  const azureClientId = requireEnv('AZURE_AD_CLIENT_ID');
+  const azureClientSecret = requireEnv('AZURE_AD_CLIENT_SECRET');
+  const azureTenantId = requireEnv('AZURE_AD_TENANT_ID');
   const port = parseInt(process.env.PORT || '3000', 10);
   const timezone = process.env.SCHOOL_TIMEZONE || 'Europe/Zurich';
 
-  if (mcpUsers.size === 0) throw new Error('MCP_USERS must define at least one user (format: user1:pass1,user2:pass2)');
+  const msAuthBase = `https://login.microsoftonline.com/${azureTenantId}/oauth2/v2.0`;
+  const msCallbackUrl = `${BASE_URL}/oauth/microsoft/callback`;
 
   // MCP sessions keyed by access-token hash
   const mcpSessions = new Map<string, McpSession>();
@@ -159,54 +92,118 @@ async function main(): Promise<void> {
 
   // ── OAuth Authorization ───────────────────────────────────────────────────
 
-  // GET — show login form
+  // GET — redirect to Microsoft login
   app.get('/oauth/authorize', (req, res) => {
-    const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource } = req.query as Record<string, string>;
+    const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state } =
+      req.query as Record<string, string>;
 
     if (response_type !== 'code' || !client_id || !redirect_uri || !code_challenge || !state) {
       res.status(400).send('Invalid OAuth request');
       return;
     }
 
-    res.send(loginPage({ client_id, redirect_uri, code_challenge, code_challenge_method: code_challenge_method || 'S256', state, resource: resource || MCP_RESOURCE }));
-  });
-
-  // POST — validate credentials, issue code, redirect
-  app.post('/oauth/authorize', async (req, res) => {
-    const { username, password, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource } = req.body as Record<string, string>;
-
-    const params = { client_id, redirect_uri, code_challenge, code_challenge_method: code_challenge_method || 'S256', state, resource: resource || MCP_RESOURCE };
-
-    if (!username || !password || !client_id || !redirect_uri || !code_challenge || !state) {
-      res.status(400).send('Missing required parameters');
-      return;
-    }
-
-    if (!checkMcpUser(mcpUsers, username, password)) {
-      res.send(loginPage(params, 'Benutzername oder Passwort ungültig.'));
-      return;
-    }
-
-    const code = generateCode();
-    oauthStore.storeCode(code, {
+    // Store claude.ai params keyed by a random state we pass to Microsoft
+    const msState = randomBytes(16).toString('base64url');
+    oauthStore.storePending(msState, {
       codeChallenge: code_challenge,
       codeChallengeMethod: code_challenge_method || 'S256',
       clientId: client_id,
       redirectUri: redirect_uri,
-      state,
-      mcpUsername: username.toLowerCase(),
+      claudeState: state,
     });
 
-    const redirectUrl = new URL(redirect_uri);
-    redirectUrl.searchParams.set('code', code);
-    redirectUrl.searchParams.set('state', state);
+    const msUrl = new URL(`${msAuthBase}/authorize`);
+    msUrl.searchParams.set('client_id', azureClientId);
+    msUrl.searchParams.set('response_type', 'code');
+    msUrl.searchParams.set('redirect_uri', msCallbackUrl);
+    msUrl.searchParams.set('scope', 'openid email profile');
+    msUrl.searchParams.set('state', msState);
+    msUrl.searchParams.set('response_mode', 'query');
+
+    res.redirect(msUrl.toString());
+  });
+
+  // GET — Microsoft redirects here after login
+  app.get('/oauth/microsoft/callback', async (req, res) => {
+    const { code, state: msState, error, error_description } =
+      req.query as Record<string, string>;
+
+    if (error || !code || !msState) {
+      res.status(400).send(`Microsoft login failed: ${error_description || error || 'Missing parameters'}`);
+      return;
+    }
+
+    const pending = oauthStore.consumePending(msState);
+    if (!pending) {
+      res.status(400).send('Login session expired or invalid. Please try again.');
+      return;
+    }
+
+    // Exchange Microsoft code for ID token
+    let email: string;
+    try {
+      const tokenRes = await fetch(`${msAuthBase}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: azureClientId,
+          client_secret: azureClientSecret,
+          code,
+          redirect_uri: msCallbackUrl,
+        }),
+      });
+
+      if (!tokenRes.ok) {
+        const body = await tokenRes.text();
+        process.stderr.write(`Microsoft token exchange failed: ${body}\n`);
+        res.status(502).send('Could not complete login with Microsoft. Please try again.');
+        return;
+      }
+
+      const tokenData = await tokenRes.json() as { id_token?: string };
+      if (!tokenData.id_token) {
+        res.status(502).send('Microsoft did not return an ID token.');
+        return;
+      }
+
+      // Decode payload — trusted since we received this directly from Microsoft over HTTPS
+      const payload = JSON.parse(
+        Buffer.from(tokenData.id_token.split('.')[1], 'base64url').toString('utf8'),
+      ) as { email?: string; preferred_username?: string };
+
+      email = (payload.email || payload.preferred_username || '').toLowerCase();
+      if (!email) {
+        res.status(400).send('No email in Microsoft token. Check app permission scopes.');
+        return;
+      }
+    } catch (err) {
+      process.stderr.write(`Microsoft callback error: ${err}\n`);
+      res.status(500).send('Internal error during Microsoft login.');
+      return;
+    }
+
+    // Issue our own auth code and redirect back to claude.ai
+    const authCode = generateCode();
+    oauthStore.storeCode(authCode, {
+      codeChallenge: pending.codeChallenge,
+      codeChallengeMethod: pending.codeChallengeMethod,
+      clientId: pending.clientId,
+      redirectUri: pending.redirectUri,
+      mcpUsername: email,
+    });
+
+    const redirectUrl = new URL(pending.redirectUri);
+    redirectUrl.searchParams.set('code', authCode);
+    redirectUrl.searchParams.set('state', pending.claudeState);
     res.redirect(redirectUrl.toString());
   });
 
   // ── OAuth Token ───────────────────────────────────────────────────────────
 
   app.post('/oauth/token', (req, res) => {
-    const { grant_type, code, code_verifier, client_id, redirect_uri } = req.body as Record<string, string>;
+    const { grant_type, code, code_verifier, client_id, redirect_uri } =
+      req.body as Record<string, string>;
 
     if (grant_type !== 'authorization_code') {
       res.status(400).json({ error: 'unsupported_grant_type' });
