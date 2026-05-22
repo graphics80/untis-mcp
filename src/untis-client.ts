@@ -1,5 +1,18 @@
 import { WebUntis, WebUntisElementType } from 'webuntis';
 
+// longName format: "Lastname Firstname" → "firstname.lastname@domain"
+export function deriveTeacherEmail(longName: string, domain: string): string {
+  const parts = longName.trim().split(/\s+/);
+  if (parts.length < 2) return '';
+  const firstName = parts[parts.length - 1];
+  const lastName = parts.slice(0, -1).join('');
+  const norm = (s: string) =>
+    s.toLowerCase()
+      .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+      .replace(/[^a-z0-9]/g, '');
+  return `${norm(firstName)}.${norm(lastName)}@${domain}`;
+}
+
 export class UntisClient {
   private untis: WebUntis | null = null;
   private timezone: string;

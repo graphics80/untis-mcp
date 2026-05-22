@@ -11,7 +11,7 @@ import { UntisClient } from '../untis-client.js';
 
 // ─── StubUntisClient ──────────────────────────────────────────────────────────
 
-const STUB_TEACHER = { id: 1, name: 'MUS', longName: 'Mustermann', title: 'Mag.' };
+const STUB_TEACHER = { id: 1, name: 'MUS', longName: 'Mustermann Max', title: 'Mag.' };
 const STUB_CLASS = { id: 10, name: '3A', longName: 'Klasse 3A' };
 const STUB_ROOM = { id: 20, name: 'A01', longName: 'Raum A01', building: 'A' };
 const STUB_STUDENT = { id: 100, firstName: 'Max', lastName: 'Muster', key: 'mm' };
@@ -79,10 +79,10 @@ class StubUntisClient extends UntisClient {
     ];
   }
   override async findSubstituteTeachers() {
-    return [{ id: 1, name: 'MUS', longName: 'Mustermann', teachesSubjectToday: true }];
+    return [{ id: 1, name: 'MUS', longName: 'Mustermann Max', teachesSubjectToday: true }];
   }
   override async getTeachersForClass() {
-    return [{ id: 1, name: 'MUS', longName: 'Mustermann', title: 'Mag.' }];
+    return [{ id: 1, name: 'MUS', longName: 'Mustermann Max', title: 'Mag.' }];
   }
 }
 
@@ -96,7 +96,7 @@ beforeAll(async () => {
     { name: 'untis-mcp', version: '1.0.0' },
     { capabilities: { tools: {} } },
   );
-  registerHandlers(server, new StubUntisClient());
+  registerHandlers(server, new StubUntisClient(), 'bzz.ch');
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'test', version: '1.0.0' }, { capabilities: {} });
@@ -127,18 +127,19 @@ describe('tools/list', () => {
 
 // ─── tools/call — each case ───────────────────────────────────────────────────
 
-async function callTool(name: string, args: object) {
+async function callTool(name: string, args: Record<string, unknown>) {
   const result = await client.callTool({ name, arguments: args });
   expect(result.isError).toBeFalsy();
-  const text = (result.content[0] as { text: string }).text;
-  return JSON.parse(text);
+  const content = result.content as Array<{ text: string }>;
+  return JSON.parse(content[0].text);
 }
 
 describe('getTeachers', () => {
-  it('returns teacher list', async () => {
+  it('returns teacher list with email', async () => {
     const data = await callTool('getTeachers', {});
     expect(data.teachers).toHaveLength(1);
     expect(data.teachers[0].name).toBe('MUS');
+    expect(data.teachers[0].email).toBe('max.mustermann@bzz.ch');
   });
 });
 
@@ -321,8 +322,8 @@ describe('unknown tool', () => {
   it('returns isError=true for an unknown tool name', async () => {
     const result = await client.callTool({ name: 'nonExistentTool', arguments: {} });
     expect(result.isError).toBe(true);
-    const text = (result.content[0] as { text: string }).text;
-    expect(text).toContain('Unknown tool');
+    const content = result.content as Array<{ text: string }>;
+    expect(content[0].text).toContain('Unknown tool');
   });
 });
 

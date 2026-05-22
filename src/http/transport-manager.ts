@@ -9,7 +9,7 @@ export interface McpStack {
   transport: StreamableHTTPServerTransport;
 }
 
-export function createMcpStack(untisClient: UntisClient, sessionId: string): McpStack {
+export function createMcpStack(untisClient: UntisClient, sessionId: string, emailDomain?: string): McpStack {
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => sessionId,
   });
@@ -19,7 +19,7 @@ export function createMcpStack(untisClient: UntisClient, sessionId: string): Mcp
     { capabilities: { tools: {} } },
   );
 
-  registerHandlers(server, untisClient);
+  registerHandlers(server, untisClient, emailDomain);
   server.connect(transport);
 
   return { server, transport };

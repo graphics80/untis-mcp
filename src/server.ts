@@ -102,6 +102,7 @@ export interface AppConfig {
   mcpUsers: Map<string, Buffer>;
   timezone?: string;
   baseUrl?: string;
+  emailDomain?: string;
 }
 
 export function createApp(config: AppConfig): {
@@ -117,6 +118,7 @@ export function createApp(config: AppConfig): {
     mcpUsers,
     timezone = 'Europe/Zurich',
     baseUrl = 'https://mcp.it.bzz.ch',
+    emailDomain,
   } = config;
 
   const MCP_PATH = '/untis';
@@ -296,7 +298,7 @@ export function createApp(config: AppConfig): {
         const client = new UntisClient(timezone);
         await client.initialize(school, untisUsername, untisPassword, untisBaseUrl);
         const sessionId = randomUUID();
-        const stack = createMcpStack(client, sessionId);
+        const stack = createMcpStack(client, sessionId, emailDomain);
         session = { stack, client, lastAccess: Date.now() };
         mcpSessions.set(tokenHash, session);
         process.stderr.write(`MCP session created: ${tokenData.clientId} (${tokenData.mcpUsername})\n`);
@@ -324,13 +326,14 @@ async function main(): Promise<void> {
   const port = parseInt(process.env.PORT || '3000', 10);
   const timezone = process.env.SCHOOL_TIMEZONE || 'Europe/Zurich';
   const baseUrl = process.env.BASE_URL || 'https://mcp.it.bzz.ch';
+  const emailDomain = process.env.SCHOOL_EMAIL_DOMAIN;
 
   if (mcpUsers.size === 0) {
     throw new Error('MCP_USERS must define at least one user (format: user1:pass1,user2:pass2)');
   }
 
   const { app, mcpSessions, sweepInterval } = createApp({
-    school, untisUsername, untisPassword, untisBaseUrl, mcpUsers, timezone, baseUrl,
+    school, untisUsername, untisPassword, untisBaseUrl, mcpUsers, timezone, baseUrl, emailDomain,
   });
 
   const httpServer = app.listen(port, '0.0.0.0', () => {

@@ -1,6 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { UntisClient } from './untis-client.js';
+import { UntisClient, deriveTeacherEmail } from './untis-client.js';
 import { TOOLS, toolSchemas } from './schemas.js';
 import {
   TimetableResponse,
@@ -212,7 +212,7 @@ const TOOL_LIST = [
         },
 ];
 
-export function registerHandlers(server: Server, untisClient: UntisClient): void {
+export function registerHandlers(server: Server, untisClient: UntisClient, emailDomain?: string): void {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_LIST }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -275,6 +275,9 @@ export function registerHandlers(server: Server, untisClient: UntisClient): void
               name: teacher.name,
               longName: teacher.longName || '',
               title: teacher.title || '',
+              ...(emailDomain && teacher.longName
+                ? { email: deriveTeacherEmail(teacher.longName, emailDomain) }
+                : {}),
             })),
           };
           break;
@@ -539,23 +542,31 @@ export function registerHandlers(server: Server, untisClient: UntisClient): void
             subArgs.subjectName,
             subArgs.qualificationDays,
           );
+          const substituteTeachers = substitutes.map((t: any) => ({
+            ...t,
+            ...(emailDomain && t.longName ? { email: deriveTeacherEmail(t.longName, emailDomain) } : {}),
+          }));
           result = {
             date: subArgs.date,
             timeSlot: `${subArgs.startTime}–${subArgs.endTime}`,
             subject: subArgs.subjectName,
-            availableTeachers: substitutes,
-            count: substitutes.length,
+            availableTeachers: substituteTeachers,
+            count: substituteTeachers.length,
           };
           break;
         }
 
         case TOOLS.GET_TEACHERS_FOR_CLASS: {
           const tfcArgs = validatedArgs as any;
-          const teachers = await untisClient.getTeachersForClass(tfcArgs.classId, tfcArgs.days);
+          const rawTeachers = await untisClient.getTeachersForClass(tfcArgs.classId, tfcArgs.days);
+          const classTeachers = rawTeachers.map((t) => ({
+            ...t,
+            ...(emailDomain && t.longName ? { email: deriveTeacherEmail(t.longName, emailDomain) } : {}),
+          }));
           result = {
             classId: tfcArgs.classId,
-            teachers,
-            count: teachers.length,
+            teachers: classTeachers,
+            count: classTeachers.length,
           };
           break;
         }
