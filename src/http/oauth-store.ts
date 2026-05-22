@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from 'crypto';
 
 const CODE_TTL_MS = 10 * 60 * 1000;   // 10 min
-const TOKEN_TTL_MS = 60 * 60 * 1000;  // 1 h — must match SESSION_TTL_MS in server.ts
+const TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000;  // 365 d — must match SESSION_TTL_MS in server.ts
 
 export interface AuthCodeData {
   codeChallenge: string;

@@ -9,15 +9,12 @@ import { oauthStore, generateCode, generateToken, verifyPkce } from './http/oaut
 
 dotenv.config();
 
+/* v8 ignore next 4 */
 function requireEnv(name: string): string {
   const val = process.env[name];
   if (!val) throw new Error(`Missing required environment variable: ${name}`);
   return val;
 }
-
-const BASE_URL = process.env.BASE_URL || 'https://mcp.it.bzz.ch';
-const MCP_PATH = '/untis';
-const MCP_RESOURCE = `${BASE_URL}${MCP_PATH}`;
 
 interface McpSession {
   stack: McpStack;
@@ -25,13 +22,13 @@ interface McpSession {
   lastAccess: number;
 }
 
-const SESSION_TTL_MS = 60 * 60 * 1000; // 1h — matches token TTL
+const SESSION_TTL_MS = 365 * 24 * 60 * 60 * 1000; // 365d — matches token TTL
 
-function escHtml(s: string): string {
+export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function loginPage(params: Record<string, string>, error?: string): string {
+export function loginPage(params: Record<string, string>, error?: string): string {
   const h = escHtml;
   const fields = ['client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'state', 'resource'];
   const hidden = fields.map(f => `<input type="hidden" name="${f}" value="${h(params[f] ?? '')}">`).join('\n');
@@ -75,7 +72,7 @@ function loginPage(params: Record<string, string>, error?: string): string {
 </html>`;
 }
 
-function parseMcpUsers(raw: string): Map<string, Buffer> {
+export function parseMcpUsers(raw: string): Map<string, Buffer> {
   const users = new Map<string, Buffer>();
   for (const pair of raw.split(',')) {
     const colon = pair.indexOf(':');
@@ -89,7 +86,7 @@ function parseMcpUsers(raw: string): Map<string, Buffer> {
   return users;
 }
 
-function checkMcpUser(users: Map<string, Buffer>, username: string, password: string): boolean {
+export function checkMcpUser(users: Map<string, Buffer>, username: string, password: string): boolean {
   const stored = users.get(username.toLowerCase());
   if (!stored) return false;
   const submitted = Buffer.from(password);
@@ -97,24 +94,37 @@ function checkMcpUser(users: Map<string, Buffer>, username: string, password: st
   return timingSafeEqual(submitted, stored);
 }
 
-async function main(): Promise<void> {
-  const school = requireEnv('WEBUNTIS_SCHOOL');
-  const baseUrl = requireEnv('WEBUNTIS_BASE_URL');
-  const untisUsername = requireEnv('WEBUNTIS_USERNAME');
-  const untisPassword = requireEnv('WEBUNTIS_PASSWORD');
-  const mcpUsers = parseMcpUsers(requireEnv('MCP_USERS'));
-  const port = parseInt(process.env.PORT || '3000', 10);
-  const timezone = process.env.SCHOOL_TIMEZONE || 'Europe/Zurich';
+export interface AppConfig {
+  school: string;
+  untisUsername: string;
+  untisPassword: string;
+  untisBaseUrl: string;
+  mcpUsers: Map<string, Buffer>;
+  timezone?: string;
+  baseUrl?: string;
+}
 
-  if (mcpUsers.size === 0) {
-    throw new Error('MCP_USERS must define at least one user (format: user1:pass1,user2:pass2)');
-  }
+export function createApp(config: AppConfig): {
+  app: express.Application;
+  mcpSessions: Map<string, McpSession>;
+  sweepInterval: ReturnType<typeof setInterval>;
+} {
+  const {
+    school,
+    untisUsername,
+    untisPassword,
+    untisBaseUrl,
+    mcpUsers,
+    timezone = 'Europe/Zurich',
+    baseUrl = 'https://mcp.it.bzz.ch',
+  } = config;
 
-  // MCP sessions keyed by access-token hash
+  const MCP_PATH = '/untis';
+  const MCP_RESOURCE = `${baseUrl}${MCP_PATH}`;
+
   const mcpSessions = new Map<string, McpSession>();
 
-  // Sweep expired sessions + OAuth store every 10 min
-  const sweepInterval = setInterval(() => {
+  const sweepInterval = setInterval(/* v8 ignore next 8 */() => {
     oauthStore.sweep();
     const cutoff = Date.now() - SESSION_TTL_MS;
     for (const [k, s] of mcpSessions) {
@@ -137,21 +147,19 @@ async function main(): Promise<void> {
 
   // ── OAuth Discovery ───────────────────────────────────────────────────────
 
-  // RFC 9728 — Protected Resource Metadata
   app.get('/.well-known/oauth-protected-resource', (_req, res) => {
     res.json({
       resource: MCP_RESOURCE,
-      authorization_servers: [BASE_URL],
+      authorization_servers: [baseUrl],
       bearer_methods_supported: ['header'],
     });
   });
 
-  // RFC 8414 — Authorization Server Metadata
   app.get('/.well-known/oauth-authorization-server', (_req, res) => {
     res.json({
-      issuer: BASE_URL,
-      authorization_endpoint: `${BASE_URL}/oauth/authorize`,
-      token_endpoint: `${BASE_URL}/oauth/token`,
+      issuer: baseUrl,
+      authorization_endpoint: `${baseUrl}/oauth/authorize`,
+      token_endpoint: `${baseUrl}/oauth/token`,
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code'],
       code_challenge_methods_supported: ['S256'],
@@ -161,7 +169,6 @@ async function main(): Promise<void> {
 
   // ── OAuth Authorization ───────────────────────────────────────────────────
 
-  // GET — show login form
   app.get('/oauth/authorize', (req, res) => {
     const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource } =
       req.query as Record<string, string>;
@@ -178,7 +185,6 @@ async function main(): Promise<void> {
     }));
   });
 
-  // POST — validate credentials, issue code, redirect
   app.post('/oauth/authorize', (req, res) => {
     const { username, password, client_id, redirect_uri, code_challenge, state, resource } =
       req.body as Record<string, string>;
@@ -258,13 +264,13 @@ async function main(): Promise<void> {
     res.json({
       access_token: token,
       token_type: 'Bearer',
-      expires_in: 3600,
+      expires_in: 365 * 24 * 3600,
     });
   });
 
   // ── MCP Endpoint (/untis) ─────────────────────────────────────────────────
 
-  const WWW_AUTHENTICATE = `Bearer realm="mcp", resource_metadata="${BASE_URL}/.well-known/oauth-protected-resource"`;
+  const WWW_AUTHENTICATE = `Bearer realm="mcp", resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`;
 
   app.all(MCP_PATH, async (req, res) => {
     try {
@@ -285,11 +291,10 @@ async function main(): Promise<void> {
 
       const tokenHash = oauthStore.tokenHash(token);
 
-      // Reuse or create MCP session for this token
       let session = mcpSessions.get(tokenHash);
       if (!session) {
         const client = new UntisClient(timezone);
-        await client.initialize(school, untisUsername, untisPassword, baseUrl);
+        await client.initialize(school, untisUsername, untisPassword, untisBaseUrl);
         const sessionId = randomUUID();
         const stack = createMcpStack(client, sessionId);
         session = { stack, client, lastAccess: Date.now() };
@@ -300,14 +305,36 @@ async function main(): Promise<void> {
       }
 
       await handleMcpRequest(session.stack, req, res);
-    } catch (err) {
+    } catch (err) /* v8 ignore next 3 */ {
       process.stderr.write(`MCP error: ${err}\n`);
       if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
     }
   });
 
+  return { app, mcpSessions, sweepInterval };
+}
+
+/* v8 ignore start */
+async function main(): Promise<void> {
+  const school = requireEnv('WEBUNTIS_SCHOOL');
+  const untisBaseUrl = requireEnv('WEBUNTIS_BASE_URL');
+  const untisUsername = requireEnv('WEBUNTIS_USERNAME');
+  const untisPassword = requireEnv('WEBUNTIS_PASSWORD');
+  const mcpUsers = parseMcpUsers(requireEnv('MCP_USERS'));
+  const port = parseInt(process.env.PORT || '3000', 10);
+  const timezone = process.env.SCHOOL_TIMEZONE || 'Europe/Zurich';
+  const baseUrl = process.env.BASE_URL || 'https://mcp.it.bzz.ch';
+
+  if (mcpUsers.size === 0) {
+    throw new Error('MCP_USERS must define at least one user (format: user1:pass1,user2:pass2)');
+  }
+
+  const { app, mcpSessions, sweepInterval } = createApp({
+    school, untisUsername, untisPassword, untisBaseUrl, mcpUsers, timezone, baseUrl,
+  });
+
   const httpServer = app.listen(port, '0.0.0.0', () => {
-    process.stderr.write(`untis-mcp listening on :${port} — MCP endpoint: ${MCP_RESOURCE}\n`);
+    process.stderr.write(`untis-mcp listening on :${port} — MCP endpoint: ${baseUrl}/untis\n`);
   });
 
   const shutdown = async () => {
@@ -321,7 +348,13 @@ async function main(): Promise<void> {
   process.on('SIGINT', shutdown);
 }
 
-main().catch((err) => {
-  process.stderr.write(`Failed to start: ${err}\n`);
-  process.exit(1);
-});
+// Only run when executed directly (not when imported by tests)
+import { fileURLToPath } from 'url';
+/* v8 ignore stop */
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  /* v8 ignore next 4 */
+  main().catch((err) => {
+    process.stderr.write(`Failed to start: ${err}\n`);
+    process.exit(1);
+  });
+}

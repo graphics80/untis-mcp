@@ -147,6 +147,36 @@ export class UntisClient {
     });
   }
 
+  async getTeachersForClass(classId: number, days: number = 30): Promise<Array<{ id: number; name: string; longName: string; title: string }>> {
+    return this.withReconnect(async () => {
+      try {
+        const endDate = new Date();
+        const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+        const [lessons, allTeachers] = await Promise.all([
+          this.getTimetableForClass(classId, startDate, endDate),
+          this.getTeachers(),
+        ]);
+
+        const teacherNames = new Set<string>();
+        for (const lesson of lessons) {
+          for (const t of lesson.te || []) teacherNames.add(t.name);
+        }
+
+        const teacherMap = new Map(allTeachers.map((t: any) => [t.name, t]));
+        return [...teacherNames]
+          .map(name => {
+            const t = teacherMap.get(name) as any;
+            return t
+              ? { id: t.id, name: t.name, longName: t.longName || '', title: t.title || '' }
+              : { id: 0, name, longName: '', title: '' };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name));
+      } catch (error) {
+        throw new Error(`Failed to fetch teachers for class: ${error}`);
+      }
+    });
+  }
+
   async getStudents(): Promise<any[]> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();

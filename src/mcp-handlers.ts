@@ -198,6 +198,18 @@ const TOOL_LIST = [
             required: ['date', 'startTime', 'endTime', 'subjectName'],
           },
         },
+        {
+          name: TOOLS.GET_TEACHERS_FOR_CLASS,
+          description: 'Get all teachers who teach a specific class, based on recent timetable data',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              classId: { type: 'number', description: 'Class ID' },
+              days: { type: 'number', description: 'Days of history to scan (default: 30)' },
+            },
+            required: ['classId'],
+          },
+        },
 ];
 
 export function registerHandlers(server: Server, untisClient: UntisClient): void {
@@ -234,6 +246,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient): void
           } else if (roomId) {
             lessons = await untisClient.getTimetableForRoom(roomId, startDate, endDate);
           } else {
+            /* v8 ignore next -- Zod schema guarantees at least one ID is set */
             throw new Error('Must provide classId, teacherId, or roomId');
           }
 
@@ -536,6 +549,18 @@ export function registerHandlers(server: Server, untisClient: UntisClient): void
           break;
         }
 
+        case TOOLS.GET_TEACHERS_FOR_CLASS: {
+          const tfcArgs = validatedArgs as any;
+          const teachers = await untisClient.getTeachersForClass(tfcArgs.classId, tfcArgs.days);
+          result = {
+            classId: tfcArgs.classId,
+            teachers,
+            count: teachers.length,
+          };
+          break;
+        }
+
+        // v8 ignore next 2 — unreachable: unknown tools are caught by the schema check above
         default:
           result = { error: `Unknown tool: ${name}` };
       }

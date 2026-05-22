@@ -21,6 +21,7 @@ export const TOOLS = {
   GET_HOMEWORK: 'getHomework',
   GET_SCHOOL_YEAR: 'getSchoolYear',
   GET_NEWS: 'getNews',
+  GET_TEACHERS_FOR_CLASS: 'getTeachersForClass',
 } as const;
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format');
@@ -92,5 +93,9 @@ export const toolSchemas = {
     endTime: hmmTimeSchema,
     subjectName: z.string().min(1),
     qualificationDays: z.number().int().min(1).max(90).optional().default(14),
+  }),
+  [TOOLS.GET_TEACHERS_FOR_CLASS]: z.object({
+    classId: z.number().int(),
+    days: z.number().int().min(1).max(365).optional().default(30),
   }),
 };

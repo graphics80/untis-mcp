@@ -240,3 +240,25 @@ describe('findSubstituteTeachers', () => {
     expect(() => schema.parse(rest)).toThrow();
   });
 });
+
+describe('getTeachersForClass', () => {
+  const schema = toolSchemas[TOOLS.GET_TEACHERS_FOR_CLASS];
+
+  it('accepts classId only', () => {
+    const result = schema.parse({ classId: 10 });
+    expect(result.classId).toBe(10);
+    expect(result.days).toBe(30);
+  });
+
+  it('accepts classId + days', () => {
+    expect(() => schema.parse({ classId: 10, days: 14 })).not.toThrow();
+  });
+
+  it('fails without classId', () => {
+    expect(() => schema.parse({ days: 7 })).toThrow();
+  });
+
+  it('fails with days > 365', () => {
+    expect(() => schema.parse({ classId: 10, days: 366 })).toThrow();
+  });
+});
