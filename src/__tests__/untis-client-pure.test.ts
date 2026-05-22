@@ -1,6 +1,6 @@
 // Tests for UntisClient methods that require no WebUntis connection — no mocks.
 import { describe, it, expect } from 'vitest';
-import { UntisClient } from '../untis-client.js';
+import { UntisClient, deriveTeacherEmail } from '../untis-client.js';
 
 describe('formatTimeToISO', () => {
   const client = new UntisClient('Europe/Vienna');
@@ -28,5 +28,23 @@ describe('logout before initialize', () => {
   it('does not throw', async () => {
     const client = new UntisClient();
     await expect(client.logout()).resolves.not.toThrow();
+  });
+});
+
+describe('deriveTeacherEmail', () => {
+  it('derives simple name', () => {
+    expect(deriveTeacherEmail('Beeler Yannick', 'bzz.ch')).toBe('yannick.beeler@bzz.ch');
+  });
+
+  it('drops hyphenated second part of compound last name', () => {
+    expect(deriveTeacherEmail('Reichner-Ris Amara', 'bzz.ch')).toBe('amara.reichner@bzz.ch');
+  });
+
+  it('normalizes umlauts', () => {
+    expect(deriveTeacherEmail('Müller Jörg', 'bzz.ch')).toBe('joerg.mueller@bzz.ch');
+  });
+
+  it('returns empty string for single-word longName', () => {
+    expect(deriveTeacherEmail('Mustermann', 'bzz.ch')).toBe('');
   });
 });
