@@ -35,7 +35,7 @@ bzz.webuntis.com
 
 ---
 
-## Tools (20 total)
+## Tools (23 total)
 
 | Tool | Description |
 |------|-------------|
@@ -43,6 +43,8 @@ bzz.webuntis.com
 | `getWeekOverview` | Full week (Mon–Fri) timetable grouped by day |
 | `getTeachers` | All teachers |
 | `getClasses` | All classes |
+| `getClassesOnDay` | All classes that have school on a specific date (with lesson count) |
+| `classOnWeekDay` | All classes that have school on a given weekday (German name or 1–7) |
 | `getRooms` | All rooms |
 | `getStudents` | All students |
 | `getSubjectsList` | All subjects offered |
@@ -51,6 +53,7 @@ bzz.webuntis.com
 | `getDepartments` | School departments |
 | `getSchoolYear` | Current and all available school years |
 | `getTeacherSubjects` | Which subjects each teacher teaches (scans timetable history) |
+| `getTeachersForClass` | All teachers who teach a specific class (scans recent timetable) |
 | `findSubstituteTeachers` | Teachers qualified for a subject AND free at a given time slot |
 | `checkTeacherAvailability` | Whether a teacher is free at a specific time, and what they're teaching if not |
 | `findAvailableRooms` | All rooms free at a given date and time slot |

@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { UntisClient, deriveTeacherEmail } from './untis-client.js';
 import { TOOLS, toolSchemas } from './schemas.js';
+import { parseWeekday, dateForWeekdayInWeek, toISODate, WEEKDAY_NAMES_ISO } from './weekday.js';
 import {
   TimetableResponse,
   StudentResponse,
@@ -208,6 +209,29 @@ const TOOL_LIST = [
               days: { type: 'number', description: 'Days of history to scan (default: 30)' },
             },
             required: ['classId'],
+          },
+        },
+        {
+          name: TOOLS.GET_CLASSES_ON_DAY,
+          description: 'Get all classes that have school (at least one lesson) on a specific date, each with its lesson count',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', description: 'Date (YYYY-MM-DD)' },
+            },
+            required: ['date'],
+          },
+        },
+        {
+          name: TOOLS.CLASS_ON_WEEKDAY,
+          description: 'Get all classes that have school on a given weekday, based on a single representative week. Weekday accepts a German name (Montag–Sonntag) or ISO number 1–7.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              weekday: { type: 'string', description: 'Weekday: German name (e.g. "Dienstag") or ISO number 1–7 (1=Montag)' },
+              weekDate: { type: 'string', description: 'Any date within the target week (YYYY-MM-DD, optional, default: current week)' },
+            },
+            required: ['weekday'],
           },
         },
 ];
@@ -567,6 +591,29 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
             classId: tfcArgs.classId,
             teachers: classTeachers,
             count: classTeachers.length,
+          };
+          break;
+        }
+
+        case TOOLS.GET_CLASSES_ON_DAY: {
+          const cdArgs = validatedArgs as any;
+          const { schoolYear, classes } = await untisClient.getClassesOnDay(new Date(cdArgs.date));
+          result = { date: cdArgs.date, schoolYear, classes, count: classes.length };
+          break;
+        }
+
+        case TOOLS.CLASS_ON_WEEKDAY: {
+          const cwArgs = validatedArgs as any;
+          const isoWeekday = parseWeekday(cwArgs.weekday);
+          const reference = cwArgs.weekDate ? new Date(cwArgs.weekDate) : new Date();
+          const targetDate = dateForWeekdayInWeek(isoWeekday, reference);
+          const { schoolYear, classes } = await untisClient.getClassesOnDay(targetDate);
+          result = {
+            weekday: WEEKDAY_NAMES_ISO[isoWeekday],
+            referenceDate: toISODate(targetDate),
+            schoolYear,
+            classes,
+            count: classes.length,
           };
           break;
         }

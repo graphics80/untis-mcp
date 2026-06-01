@@ -84,6 +84,12 @@ class StubUntisClient extends UntisClient {
   override async getTeachersForClass() {
     return [{ id: 1, name: 'MUS', longName: 'Mustermann Max', title: 'Mag.' }];
   }
+  override async getClassesOnDay() {
+    return {
+      schoolYear: { id: 1, name: '2025/26' },
+      classes: [{ id: 10, name: '3A', longName: 'Klasse 3A', lessonCount: 4 }],
+    };
+  }
 }
 
 // ─── Client/Server wiring ──────────────────────────────────────────────────────
@@ -115,9 +121,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 21 tools', async () => {
+  it('returns all 23 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(23);
     const names = tools.map(t => t.name);
     expect(names).toContain('getTeachers');
     expect(names).toContain('getTimetable');
@@ -313,6 +319,48 @@ describe('findSubstituteTeachers', () => {
     });
     expect(data.availableTeachers[0].name).toBe('MUS');
     expect(data.count).toBe(1);
+  });
+});
+
+describe('getClassesOnDay', () => {
+  it('returns classes with school on the given date', async () => {
+    const data = await callTool('getClassesOnDay', { date: '2026-05-19' });
+    expect(data.date).toBe('2026-05-19');
+    expect(data.count).toBe(1);
+    expect(data.classes[0]).toMatchObject({ id: 10, name: '3A', lessonCount: 4 });
+    expect(data.schoolYear.name).toBe('2025/26');
+  });
+
+  it('rejects an invalid date', async () => {
+    const result = await client.callTool({ name: 'getClassesOnDay', arguments: { date: 'nope' } });
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe('classOnWeekDay', () => {
+  it('resolves a German weekday name to a concrete date', async () => {
+    const data = await callTool('classOnWeekDay', { weekday: 'Dienstag', weekDate: '2026-06-03' });
+    expect(data.weekday).toBe('Dienstag');
+    expect(data.referenceDate).toBe('2026-06-02'); // Tuesday of that week
+    expect(data.count).toBe(1);
+    expect(data.classes[0].name).toBe('3A');
+  });
+
+  it('accepts an ISO weekday number', async () => {
+    const data = await callTool('classOnWeekDay', { weekday: 5, weekDate: '2026-06-03' });
+    expect(data.weekday).toBe('Freitag');
+    expect(data.referenceDate).toBe('2026-06-05');
+  });
+
+  it('defaults to the current week when weekDate is omitted', async () => {
+    const data = await callTool('classOnWeekDay', { weekday: 'Montag' });
+    expect(data.weekday).toBe('Montag');
+    expect(data.referenceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('rejects an invalid weekday', async () => {
+    const result = await client.callTool({ name: 'classOnWeekDay', arguments: { weekday: 'Funday' } });
+    expect(result.isError).toBe(true);
   });
 });
 

@@ -1,4 +1,5 @@
 import { WebUntis, WebUntisElementType } from 'webuntis';
+import { toISODate } from './weekday.js';
 
 // longName format: "Lastname Firstname" → "firstname.lastname@domain"
 // Compound last names (e.g. "Reichner-Ris") use only the first part → "reichner"
@@ -102,11 +103,6 @@ export class UntisClient {
   private static untisDateToISO(date: number): string {
     const ds = String(date);
     return `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6, 8)}`;
-  }
-
-  // Convert JS Date to ISO date string using local date fields (not UTC)
-  private static jsDateToISO(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   // DST-aware UTC offset for this.timezone at the given instant
@@ -483,7 +479,7 @@ export class UntisClient {
         return Array.from({ length: 5 }, (_, i) => {
           const d = new Date(monday);
           d.setDate(monday.getDate() + i);
-          const isoDate = UntisClient.jsDateToISO(d);
+          const isoDate = toISODate(d);
           const untisKey = isoDate.replace(/-/g, '');
           const lessons = (byDate[untisKey] || []).sort((a: any, b: any) => a.startTime - b.startTime);
           return { day: dayNames[i], date: isoDate, lessons };
@@ -527,6 +523,51 @@ export class UntisClient {
         return { current, all };
       } catch (error) {
         throw new Error(`Failed to fetch school year: ${error}`);
+      }
+    });
+  }
+
+  // Find the school year whose date range contains the given date.
+  private async resolveSchoolYear(date: Date): Promise<{ id: number; name: string } | null> {
+    const client = this.ensureClient();
+    const years = (await client.getSchoolyears()) || [];
+    const match = years.find((y: any) => y.startDate <= date && date <= y.endDate);
+    return match ? { id: match.id, name: match.name } : null;
+  }
+
+  // All classes of the school year matching `date` that have at least one
+  // non-cancelled lesson on that exact day, each with its lesson count.
+  // Per-class timetable fetches are throttled via batchMap (limit 5).
+  async getClassesOnDay(date: Date): Promise<{
+    schoolYear: { id: number; name: string } | null;
+    classes: Array<{ id: number; name: string; longName: string; lessonCount: number }>;
+  }> {
+    return this.withReconnect(async () => {
+      const client = this.ensureClient();
+      try {
+        const schoolYear = await this.resolveSchoolYear(date);
+        const classes =
+          (await client.getClasses(true, schoolYear?.id as number)) || [];
+
+        const withLessons = await this.batchMap(classes, async (klasse: any) => {
+          try {
+            const timetable =
+              (await client.getTimetableFor(date, klasse.id, WebUntisElementType.CLASS)) || [];
+            const lessonCount = timetable.filter((l: any) => l.code !== 'cancelled').length;
+            return lessonCount > 0
+              ? { id: klasse.id, name: klasse.name, longName: klasse.longName || '', lessonCount }
+              : null;
+          } catch {
+            return null;
+          }
+        });
+
+        return {
+          schoolYear,
+          classes: withLessons.sort((a, b) => a.name.localeCompare(b.name)),
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch classes on day: ${error}`);
       }
     });
   }

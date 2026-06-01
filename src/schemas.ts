@@ -22,6 +22,8 @@ export const TOOLS = {
   GET_SCHOOL_YEAR: 'getSchoolYear',
   GET_NEWS: 'getNews',
   GET_TEACHERS_FOR_CLASS: 'getTeachersForClass',
+  GET_CLASSES_ON_DAY: 'getClassesOnDay',
+  CLASS_ON_WEEKDAY: 'classOnWeekDay',
 } as const;
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format');
@@ -97,5 +99,12 @@ export const toolSchemas = {
   [TOOLS.GET_TEACHERS_FOR_CLASS]: z.object({
     classId: z.number().int(),
     days: z.number().int().min(1).max(365).optional().default(30),
+  }),
+  [TOOLS.GET_CLASSES_ON_DAY]: z.object({
+    date: dateSchema,
+  }),
+  [TOOLS.CLASS_ON_WEEKDAY]: z.object({
+    weekday: z.union([z.number().int().min(1).max(7), z.string().min(1)]),
+    weekDate: dateSchema.optional(),
   }),
 };

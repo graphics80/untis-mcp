@@ -10,6 +10,7 @@ const mockInstance = vi.hoisted(() => ({
   getTimetableForRange: vi.fn(),
   getTimetableForToday: vi.fn(),
   getTimetableFor: vi.fn(),
+  getSchoolyears: vi.fn(),
 }));
 
 vi.mock('webuntis', () => ({
@@ -265,6 +266,82 @@ describe('findSubstituteTeachers', () => {
       new Date('2026-05-18'), 800, 850, 'Chemie', 14,
     );
     expect(result).toHaveLength(0);
+  });
+});
+
+// ─── getClassesOnDay ──────────────────────────────────────────────────────────
+
+describe('getClassesOnDay', () => {
+  const SCHOOL_YEARS = [
+    { id: 1, name: '2025/26', startDate: new Date('2025-09-01'), endDate: new Date('2026-06-30') },
+  ];
+  const CLASSES = [
+    { id: 10, name: '3A', longName: 'Klasse 3A' },
+    { id: 11, name: '1B', longName: 'Klasse 1B' },
+  ];
+
+  it('returns only classes with at least one non-cancelled lesson, with lesson count', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getTimetableFor
+      .mockResolvedValueOnce([makeLesson(), makeLesson()]) // 10 → 2 lessons
+      .mockResolvedValueOnce([]);                          // 11 → none
+    const client = await makeClient();
+    const result = await client.getClassesOnDay(new Date('2026-05-18'));
+    expect(result.classes).toHaveLength(1);
+    expect(result.classes[0]).toMatchObject({ id: 10, name: '3A', lessonCount: 2 });
+    expect(result.schoolYear).toEqual({ id: 1, name: '2025/26' });
+  });
+
+  it('resolves the school year containing the date and filters getClasses by its id', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getTimetableFor.mockResolvedValue([]);
+    const client = await makeClient();
+    await client.getClassesOnDay(new Date('2026-05-18'));
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 1);
+  });
+
+  it('falls back to null school year and undefined filter when the date is outside all years', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getTimetableFor.mockResolvedValue([]);
+    const client = await makeClient();
+    const result = await client.getClassesOnDay(new Date('2030-01-01'));
+    expect(result.schoolYear).toBeNull();
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, undefined);
+  });
+
+  it('excludes classes whose only lessons are cancelled', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([CLASSES[0]]);
+    mockInstance.getTimetableFor.mockResolvedValue([makeLesson({ code: 'cancelled' })]);
+    const client = await makeClient();
+    const result = await client.getClassesOnDay(new Date('2026-05-18'));
+    expect(result.classes).toHaveLength(0);
+  });
+
+  it('returns classes sorted alphabetically by name', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([
+      { id: 11, name: '1B', longName: '' },
+      { id: 10, name: '3A', longName: '' },
+    ]);
+    mockInstance.getTimetableFor.mockResolvedValue([makeLesson()]);
+    const client = await makeClient();
+    const result = await client.getClassesOnDay(new Date('2026-05-18'));
+    expect(result.classes.map((c) => c.name)).toEqual(['1B', '3A']);
+  });
+
+  it('tolerates a per-class timetable error (skips that class)', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getTimetableFor
+      .mockRejectedValueOnce(new Error('boom')) // 10 fails
+      .mockResolvedValueOnce([makeLesson()]);   // 11 ok
+    const client = await makeClient();
+    const result = await client.getClassesOnDay(new Date('2026-05-18'));
+    expect(result.classes.map((c) => c.id)).toEqual([11]);
   });
 });
 
