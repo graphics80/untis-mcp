@@ -306,3 +306,177 @@ describe('getLessonsForSubject', () => {
     expect(() => schema.parse({ subjectName: 'M', startDate: '18/05/2026' })).toThrow();
   });
 });
+
+// ─── getClasses schoolYearId ──────────────────────────────────────────────────
+
+describe('getClasses schoolYearId', () => {
+  const schema = toolSchemas[TOOLS.GET_CLASSES];
+
+  it('accepts empty object (current year)', () => {
+    expect(() => schema.parse({})).not.toThrow();
+  });
+
+  it('accepts schoolYearId', () => {
+    expect(() => schema.parse({ schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('fails with non-positive schoolYearId', () => {
+    expect(() => schema.parse({ schoolYearId: 0 })).toThrow();
+  });
+
+  it('fails with non-integer schoolYearId', () => {
+    expect(() => schema.parse({ schoolYearId: 1.5 })).toThrow();
+  });
+});
+
+// ─── getAbsences Group C refine ───────────────────────────────────────────────
+
+describe('getAbsences Group C', () => {
+  const schema = toolSchemas[TOOLS.GET_ABSENCES];
+
+  it('accepts startDate + endDate', () => {
+    expect(() => schema.parse({ startDate: validDate, endDate: validDate })).not.toThrow();
+  });
+
+  it('accepts schoolYearId only', () => {
+    expect(() => schema.parse({ schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('accepts all three fields', () => {
+    expect(() => schema.parse({ startDate: validDate, endDate: validDate, schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('fails when nothing provided', () => {
+    expect(() => schema.parse({})).toThrow();
+  });
+
+  it('fails when only startDate provided', () => {
+    expect(() => schema.parse({ startDate: validDate })).toThrow();
+  });
+
+  it('fails when only endDate provided', () => {
+    expect(() => schema.parse({ endDate: validDate })).toThrow();
+  });
+});
+
+// ─── getExams Group C refine ──────────────────────────────────────────────────
+
+describe('getExams Group C', () => {
+  const schema = toolSchemas[TOOLS.GET_EXAMS];
+
+  it('accepts startDate + endDate', () => {
+    expect(() => schema.parse({ startDate: validDate, endDate: validDate })).not.toThrow();
+  });
+
+  it('accepts schoolYearId only', () => {
+    expect(() => schema.parse({ schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('fails when nothing provided', () => {
+    expect(() => schema.parse({})).toThrow();
+  });
+});
+
+// ─── getHomework Group C refine ───────────────────────────────────────────────
+
+describe('getHomework Group C', () => {
+  const schema = toolSchemas[TOOLS.GET_HOMEWORK];
+
+  it('accepts startDate + endDate', () => {
+    expect(() => schema.parse({ startDate: validDate, endDate: validDate })).not.toThrow();
+  });
+
+  it('accepts schoolYearId only', () => {
+    expect(() => schema.parse({ schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('fails when nothing provided', () => {
+    expect(() => schema.parse({})).toThrow();
+  });
+});
+
+// ─── getTeacherWorkload Group C refine ────────────────────────────────────────
+
+describe('getTeacherWorkload Group C', () => {
+  const schema = toolSchemas[TOOLS.GET_TEACHER_WORKLOAD];
+
+  it('accepts teacherId + startDate + endDate', () => {
+    expect(() => schema.parse({ teacherId: 1, startDate: validDate, endDate: validDate })).not.toThrow();
+  });
+
+  it('accepts teacherId + schoolYearId', () => {
+    expect(() => schema.parse({ teacherId: 1, schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('fails without teacherId', () => {
+    expect(() => schema.parse({ schoolYearId: 42 })).toThrow();
+  });
+
+  it('fails when teacherId present but neither dates nor schoolYearId', () => {
+    expect(() => schema.parse({ teacherId: 1 })).toThrow();
+  });
+});
+
+// ─── getClassesOnDay schoolYearId ─────────────────────────────────────────────
+
+describe('getClassesOnDay schoolYearId', () => {
+  const schema = toolSchemas[TOOLS.GET_CLASSES_ON_DAY];
+
+  it('accepts date only', () => {
+    expect(() => schema.parse({ date: validDate })).not.toThrow();
+  });
+
+  it('accepts date + schoolYearId', () => {
+    expect(() => schema.parse({ date: validDate, schoolYearId: 42 })).not.toThrow();
+  });
+});
+
+// ─── classOnWeekday schoolYearId ─────────────────────────────────────────────
+
+describe('classOnWeekday schoolYearId', () => {
+  const schema = toolSchemas[TOOLS.CLASS_ON_WEEKDAY];
+
+  it('accepts weekday only', () => {
+    expect(() => schema.parse({ weekday: 'Montag' })).not.toThrow();
+  });
+
+  it('accepts weekday + schoolYearId', () => {
+    expect(() => schema.parse({ weekday: 2, schoolYearId: 42 })).not.toThrow();
+  });
+});
+
+// ─── getTeacherSubjects schoolYearId ─────────────────────────────────────────
+
+describe('getTeacherSubjects schoolYearId', () => {
+  const schema = toolSchemas[TOOLS.GET_TEACHER_SUBJECTS];
+
+  it('accepts empty object', () => {
+    expect(() => schema.parse({})).not.toThrow();
+  });
+
+  it('accepts schoolYearId', () => {
+    expect(() => schema.parse({ schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('accepts days + schoolYearId', () => {
+    expect(() => schema.parse({ days: 14, schoolYearId: 42 })).not.toThrow();
+  });
+});
+
+// ─── getTeachersForClass schoolYearId ────────────────────────────────────────
+
+describe('getTeachersForClass schoolYearId', () => {
+  const schema = toolSchemas[TOOLS.GET_TEACHERS_FOR_CLASS];
+
+  it('accepts classId only', () => {
+    expect(() => schema.parse({ classId: 10 })).not.toThrow();
+  });
+
+  it('accepts classId + schoolYearId', () => {
+    expect(() => schema.parse({ classId: 10, schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('accepts classId + days + schoolYearId', () => {
+    expect(() => schema.parse({ classId: 10, days: 60, schoolYearId: 42 })).not.toThrow();
+  });
+});

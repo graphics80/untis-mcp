@@ -11,6 +11,9 @@ const mockInstance = vi.hoisted(() => ({
   getTimetableForToday: vi.fn(),
   getTimetableFor: vi.fn(),
   getSchoolyears: vi.fn(),
+  getAbsentLesson: vi.fn(),
+  getExamsForRange: vi.fn(),
+  getHomeWorksFor: vi.fn(),
 }));
 
 vi.mock('webuntis', () => ({
@@ -352,5 +355,249 @@ describe('logout', () => {
     const client = await makeClient();
     await client.logout();
     expect(mockInstance.logout).toHaveBeenCalledOnce();
+  });
+});
+
+// ─── getClasses with schoolYearId ─────────────────────────────────────────────
+
+const SAMPLE_SCHOOL_YEARS = [
+  { id: 42, name: '2025/26', startDate: new Date('2025-09-01'), endDate: new Date('2026-06-30') },
+  { id: 10, name: '2024/25', startDate: new Date('2024-09-01'), endDate: new Date('2025-08-31') },
+];
+
+describe('getClasses schoolYearId', () => {
+  it('passes schoolYearId to underlying API when provided', async () => {
+    mockInstance.getClasses.mockResolvedValue([{ id: 1, name: '3A', longName: 'Klasse 3A' }]);
+    const client = await makeClient();
+    await client.getClasses(42);
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 42);
+  });
+
+  it('passes undefined when no schoolYearId provided (default behaviour)', async () => {
+    mockInstance.getClasses.mockResolvedValue([]);
+    const client = await makeClient();
+    await client.getClasses();
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, undefined);
+  });
+});
+
+// ─── getClassesOnDay with schoolYearId ────────────────────────────────────────
+
+describe('getClassesOnDay schoolYearId', () => {
+  it('uses findSchoolYear when schoolYearId is provided instead of resolveSchoolYear', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([{ id: 5, name: '2B', longName: 'Klasse 2B' }]);
+    mockInstance.getTimetableForRange.mockResolvedValue([makeLesson()]);
+    const client = await makeClient();
+    const result = await client.getClassesOnDay(new Date('2024-11-15'), 42);
+    expect(result.schoolYear).toEqual({ id: 42, name: '2025/26' });
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 42);
+  });
+
+  it('throws when schoolYearId not found', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    const client = await makeClient();
+    await expect(client.getClassesOnDay(new Date('2026-05-18'), 999)).rejects.toThrow('School year 999 not found');
+  });
+});
+
+// ─── getTeacherSubjects with schoolYearId ─────────────────────────────────────
+
+describe('getTeacherSubjects schoolYearId', () => {
+  it('uses school year date range instead of days when schoolYearId provided', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getTeachers.mockResolvedValue([{ id: 1, name: 'MUS' }]);
+    mockInstance.getClasses.mockResolvedValue([{ id: 5, name: '3A' }]);
+    mockInstance.getTimetableForRange.mockResolvedValue([
+      makeLesson({ te: [{ name: 'MUS' }], su: [{ name: 'Mathematik' }] }),
+    ]);
+    const client = await makeClient();
+    const result = await client.getTeacherSubjects(7, 42);
+    expect(mockInstance.getTimetableForRange).toHaveBeenCalledWith(
+      SAMPLE_SCHOOL_YEARS[0].startDate,
+      SAMPLE_SCHOOL_YEARS[0].endDate,
+      5,
+      1,
+    );
+    expect(result['MUS']).toContain('Mathematik');
+  });
+
+  it('throws when schoolYearId not found', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getTeachers.mockResolvedValue([]);
+    const client = await makeClient();
+    await expect(client.getTeacherSubjects(7, 999)).rejects.toThrow('School year 999 not found');
+  });
+});
+
+// ─── getTeachersForClass with schoolYearId ────────────────────────────────────
+
+describe('getTeachersForClass schoolYearId', () => {
+  it('uses school year date range instead of days when schoolYearId provided', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getTeachers.mockResolvedValue([{ id: 1, name: 'MUS', longName: 'Mustermann', title: 'Mag.' }]);
+    mockInstance.getTimetableForRange.mockResolvedValue([makeLesson()]);
+    const client = await makeClient();
+    const result = await client.getTeachersForClass(10, 30, 42);
+    expect(mockInstance.getTimetableForRange).toHaveBeenCalledWith(
+      SAMPLE_SCHOOL_YEARS[0].startDate,
+      SAMPLE_SCHOOL_YEARS[0].endDate,
+      10,
+      1,
+    );
+    expect(result[0].name).toBe('MUS');
+  });
+
+  it('throws when schoolYearId not found', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    const client = await makeClient();
+    await expect(client.getTeachersForClass(10, 30, 999)).rejects.toThrow('School year 999 not found');
+  });
+});
+
+// ─── getAbsences with schoolYearId ────────────────────────────────────────────
+
+describe('getAbsences schoolYearId', () => {
+  it('uses school year dates when no explicit dates provided', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getAbsentLesson.mockResolvedValue({ absences: [] });
+    const client = await makeClient();
+    await client.getAbsences(undefined, undefined, 42);
+    expect(mockInstance.getAbsentLesson).toHaveBeenCalledWith(
+      SAMPLE_SCHOOL_YEARS[0].startDate,
+      SAMPLE_SCHOOL_YEARS[0].endDate,
+    );
+  });
+
+  it('explicit dates take precedence over school year dates', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getAbsentLesson.mockResolvedValue({ absences: [] });
+    const client = await makeClient();
+    const start = new Date('2025-10-01');
+    const end = new Date('2025-10-31');
+    await client.getAbsences(start, end, 42);
+    expect(mockInstance.getAbsentLesson).toHaveBeenCalledWith(start, end);
+  });
+
+  it('throws when neither dates nor schoolYearId provided', async () => {
+    const client = await makeClient();
+    await expect(client.getAbsences(undefined, undefined)).rejects.toThrow(
+      'startDate and endDate are required when schoolYearId is not provided',
+    );
+  });
+
+  it('throws when schoolYearId not found', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    const client = await makeClient();
+    await expect(client.getAbsences(undefined, undefined, 999)).rejects.toThrow('School year 999 not found');
+  });
+});
+
+// ─── getExams with schoolYearId ───────────────────────────────────────────────
+
+describe('getExams schoolYearId', () => {
+  it('uses school year dates when no explicit dates provided', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getExamsForRange.mockResolvedValue([]);
+    const client = await makeClient();
+    await client.getExams(undefined, undefined, undefined, 42);
+    expect(mockInstance.getExamsForRange).toHaveBeenCalledWith(
+      SAMPLE_SCHOOL_YEARS[0].startDate,
+      SAMPLE_SCHOOL_YEARS[0].endDate,
+      undefined,
+    );
+  });
+
+  it('throws when neither dates nor schoolYearId provided', async () => {
+    const client = await makeClient();
+    await expect(client.getExams(undefined, undefined)).rejects.toThrow(
+      'startDate and endDate are required when schoolYearId is not provided',
+    );
+  });
+});
+
+// ─── getHomework with schoolYearId ────────────────────────────────────────────
+
+describe('getHomework schoolYearId', () => {
+  it('uses school year dates when no explicit dates provided', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getHomeWorksFor.mockResolvedValue([]);
+    const client = await makeClient();
+    await client.getHomework(undefined, undefined, 42);
+    expect(mockInstance.getHomeWorksFor).toHaveBeenCalledWith(
+      SAMPLE_SCHOOL_YEARS[0].startDate,
+      SAMPLE_SCHOOL_YEARS[0].endDate,
+    );
+  });
+
+  it('throws when neither dates nor schoolYearId provided', async () => {
+    const client = await makeClient();
+    await expect(client.getHomework(undefined, undefined)).rejects.toThrow(
+      'startDate and endDate are required when schoolYearId is not provided',
+    );
+  });
+});
+
+// ─── getTeacherWorkload with schoolYearId ─────────────────────────────────────
+
+describe('getTeacherWorkload schoolYearId', () => {
+  it('uses school year dates when no explicit dates provided', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getTimetableForRange.mockResolvedValue([makeLesson()]);
+    const client = await makeClient();
+    await client.getTeacherWorkload(1, undefined, undefined, 42);
+    expect(mockInstance.getTimetableForRange).toHaveBeenCalledWith(
+      SAMPLE_SCHOOL_YEARS[0].startDate,
+      SAMPLE_SCHOOL_YEARS[0].endDate,
+      1,
+      2,
+    );
+  });
+
+  it('throws when neither dates nor schoolYearId provided', async () => {
+    const client = await makeClient();
+    await expect(client.getTeacherWorkload(1, undefined, undefined)).rejects.toThrow(
+      'startDate and endDate are required when schoolYearId is not provided',
+    );
+  });
+});
+
+// ─── getLessonsForSubject with schoolYearId ───────────────────────────────────
+
+describe('getLessonsForSubject schoolYearId', () => {
+  it('passes schoolYearId to getClasses so future-year class IDs are resolved', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([{ id: 99, name: '4A', longName: 'Klasse 4A' }]);
+    mockInstance.getTimetableForRange.mockResolvedValue([
+      makeLesson({ su: [{ name: 'Mathe' }] }),
+    ]);
+    const client = await makeClient();
+    await client.getLessonsForSubject('Mathe', undefined, 42);
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 42);
+  });
+
+  it('uses school year date range when only schoolYearId is provided', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([{ id: 99, name: '4A', longName: 'Klasse 4A' }]);
+    mockInstance.getTimetableForRange.mockResolvedValue([]);
+    const client = await makeClient();
+    await client.getLessonsForSubject('Mathe', undefined, 42);
+    expect(mockInstance.getTimetableForRange).toHaveBeenCalledWith(
+      SAMPLE_SCHOOL_YEARS[0].startDate,
+      SAMPLE_SCHOOL_YEARS[0].endDate,
+      99,
+      1,
+    );
+  });
+
+  it('explicit startDate/endDate take precedence over schoolYearId dates', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([{ id: 99, name: '4A', longName: 'Klasse 4A' }]);
+    mockInstance.getTimetableForRange.mockResolvedValue([]);
+    const client = await makeClient();
+    const start = new Date('2025-10-01');
+    const end = new Date('2025-10-31');
+    await client.getLessonsForSubject('Mathe', undefined, 42, start, end);
+    expect(mockInstance.getTimetableForRange).toHaveBeenCalledWith(start, end, 99, 1);
   });
 });

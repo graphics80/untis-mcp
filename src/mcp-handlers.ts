@@ -11,6 +11,8 @@ import {
   RoomResponse,
 } from './types.js';
 
+const SCHOOL_YEAR_HINT = 'Call getSchoolYear first to find available school year IDs.';
+
 const TOOL_LIST = [
         {
           name: TOOLS.GET_TIMETABLE,
@@ -34,8 +36,14 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_CLASSES,
-          description: 'Get all classes',
-          inputSchema: { type: 'object', properties: {}, required: [] },
+          description: `Get all classes. ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year)' },
+            },
+            required: [],
+          },
         },
         {
           name: TOOLS.GET_ROOMS,
@@ -49,14 +57,15 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_ABSENCES,
-          description: 'Get absences for date range',
+          description: `Get absences for date range. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
-              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-              endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
+              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD, optional if schoolYearId provided)' },
+              endDate: { type: 'string', description: 'End date (YYYY-MM-DD, optional if schoolYearId provided)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; sets default date range when dates are omitted)' },
             },
-            required: ['startDate', 'endDate'],
+            required: [],
           },
         },
         {
@@ -66,11 +75,12 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_TEACHER_SUBJECTS,
-          description: 'Get which subjects each teacher teaches',
+          description: `Get which subjects each teacher teaches. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
-              days: { type: 'number', description: 'Number of days to scan (default: 7)' },
+              days: { type: 'number', description: 'Number of days to scan (default: 7, ignored when schoolYearId is set)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; scans the full school year instead of last N days)' },
             },
             required: [],
           },
@@ -119,15 +129,16 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_TEACHER_WORKLOAD,
-          description: 'Get the lesson count and subject distribution for a teacher over a date range',
+          description: `Get the lesson count and subject distribution for a teacher over a date range. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
               teacherId: { type: 'number', description: 'Teacher ID' },
-              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-              endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
+              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD, optional if schoolYearId provided)' },
+              endDate: { type: 'string', description: 'End date (YYYY-MM-DD, optional if schoolYearId provided)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; sets default date range when dates are omitted)' },
             },
-            required: ['teacherId', 'startDate', 'endDate'],
+            required: ['teacherId'],
           },
         },
         {
@@ -145,27 +156,29 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_EXAMS,
-          description: 'Get exams/tests for a date range, optionally filtered by class',
+          description: `Get exams/tests for a date range, optionally filtered by class. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
-              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-              endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
+              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD, optional if schoolYearId provided)' },
+              endDate: { type: 'string', description: 'End date (YYYY-MM-DD, optional if schoolYearId provided)' },
               classId: { type: 'number', description: 'Class ID to filter by (optional)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; sets default date range when dates are omitted)' },
             },
-            required: ['startDate', 'endDate'],
+            required: [],
           },
         },
         {
           name: TOOLS.GET_HOMEWORK,
-          description: 'Get homework assignments for a date range',
+          description: `Get homework assignments for a date range. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
-              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
-              endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
+              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD, optional if schoolYearId provided)' },
+              endDate: { type: 'string', description: 'End date (YYYY-MM-DD, optional if schoolYearId provided)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; sets default date range when dates are omitted)' },
             },
-            required: ['startDate', 'endDate'],
+            required: [],
           },
         },
         {
@@ -201,42 +214,45 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_TEACHERS_FOR_CLASS,
-          description: 'Get all teachers who teach a specific class, based on recent timetable data',
+          description: `Get all teachers who teach a specific class. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
               classId: { type: 'number', description: 'Class ID' },
-              days: { type: 'number', description: 'Days of history to scan (default: 30)' },
+              days: { type: 'number', description: 'Days of history to scan (default: 30, ignored when schoolYearId is set)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; scans the full school year instead of last N days)' },
             },
             required: ['classId'],
           },
         },
         {
           name: TOOLS.GET_CLASSES_ON_DAY,
-          description: 'Get all classes that have school (at least one lesson) on a specific date, each with its lesson count',
+          description: `Get all classes that have school (at least one lesson) on a specific date, each with its lesson count. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
               date: { type: 'string', description: 'Date (YYYY-MM-DD)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; overrides auto-detection from date)' },
             },
             required: ['date'],
           },
         },
         {
           name: TOOLS.CLASS_ON_WEEKDAY,
-          description: 'Get all classes that have school on a given weekday, based on a single representative week. Weekday accepts a German name (Montag–Sonntag) or ISO number 1–7.',
+          description: `Get all classes that have school on a given weekday, based on a single representative week. Weekday accepts a German name (Montag–Sonntag) or ISO number 1–7. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
               weekday: { type: 'string', description: 'Weekday: German name (e.g. "Dienstag") or ISO number 1–7 (1=Montag)' },
               weekDate: { type: 'string', description: 'Any date within the target week (YYYY-MM-DD, optional, default: current week)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; overrides auto-detection from date)' },
             },
             required: ['weekday'],
           },
         },
         {
           name: TOOLS.GET_YEARLY_TIMETABLE_FOR_CLASS,
-          description: 'Get all lessons for a class across a full school year, split into four quarters. Use this to see the annual schedule and detect schedule changes between quarters. Call getSchoolYear first to find available school year IDs.',
+          description: `Get all lessons for a class across a full school year, split into four quarters. Use this to see the annual schedule and detect schedule changes between quarters. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -248,7 +264,7 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_LESSONS_FOR_SUBJECT,
-          description: 'Get all scheduled lessons for a subject across all classes (or a specific class) within a date range (defaults to current school year). Returns results grouped by date and by class. Call getSchoolYear first to find available school year IDs.',
+          description: `Get all scheduled lessons for a subject across all classes (or a specific class) within a date range (defaults to current school year). Returns results grouped by date and by class. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -335,7 +351,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
         }
 
         case TOOLS.GET_CLASSES: {
-          const classes = await untisClient.getClasses();
+          const classes = await untisClient.getClasses((validatedArgs as any).schoolYearId);
           result = {
             classes: classes.map((klasse) => ({
               id: klasse.id,
@@ -372,10 +388,12 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
         }
 
         case TOOLS.GET_ABSENCES: {
-          const { startDate: startDateStr, endDate: endDateStr } = validatedArgs as any;
-          const startDate = new Date(startDateStr);
-          const endDate = new Date(endDateStr);
-          const absences = await untisClient.getAbsences(startDate, endDate);
+          const { startDate: startDateStr, endDate: endDateStr, schoolYearId } = validatedArgs as any;
+          const absences = await untisClient.getAbsences(
+            startDateStr ? new Date(startDateStr) : undefined,
+            endDateStr ? new Date(endDateStr) : undefined,
+            schoolYearId,
+          );
           result = {
             absences: absences.absences?.map((absence: any) => ({
               id: absence.id,
@@ -402,11 +420,13 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
 
         case TOOLS.GET_TEACHER_SUBJECTS: {
           const teacherSubjectsArgs = validatedArgs as any;
-          const { days } = teacherSubjectsArgs;
-          const teacherSubjects = await untisClient.getTeacherSubjects(days);
+          const { days, schoolYearId: tsSchoolYearId } = teacherSubjectsArgs;
+          const teacherSubjects = await untisClient.getTeacherSubjects(days, tsSchoolYearId);
           result = {
             teacherSubjects,
-            description: `Teacher-Subject mapping based on last ${days} days of timetables`,
+            description: tsSchoolYearId
+              ? `Teacher-Subject mapping for school year ${tsSchoolYearId}`
+              : `Teacher-Subject mapping based on last ${days} days of timetables`,
           };
           break;
         }
@@ -414,9 +434,10 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
         case TOOLS.GET_EXAMS: {
           const exArgs = validatedArgs as any;
           const exams = await untisClient.getExams(
-            new Date(exArgs.startDate),
-            new Date(exArgs.endDate),
+            exArgs.startDate ? new Date(exArgs.startDate) : undefined,
+            exArgs.endDate ? new Date(exArgs.endDate) : undefined,
             exArgs.classId,
+            exArgs.schoolYearId,
           );
           result = {
             exams: exams.map((e: any) => ({
@@ -440,8 +461,9 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
         case TOOLS.GET_HOMEWORK: {
           const hwArgs = validatedArgs as any;
           const homework = await untisClient.getHomework(
-            new Date(hwArgs.startDate),
-            new Date(hwArgs.endDate),
+            hwArgs.startDate ? new Date(hwArgs.startDate) : undefined,
+            hwArgs.endDate ? new Date(hwArgs.endDate) : undefined,
+            hwArgs.schoolYearId,
           );
           result = {
             homework: homework.map((h: any) => ({
@@ -548,10 +570,14 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
           const wlArgs = validatedArgs as any;
           const wlResult = await untisClient.getTeacherWorkload(
             wlArgs.teacherId,
-            new Date(wlArgs.startDate),
-            new Date(wlArgs.endDate),
+            wlArgs.startDate ? new Date(wlArgs.startDate) : undefined,
+            wlArgs.endDate ? new Date(wlArgs.endDate) : undefined,
+            wlArgs.schoolYearId,
           );
-          result = { teacherId: wlArgs.teacherId, period: `${wlArgs.startDate} – ${wlArgs.endDate}`, ...wlResult };
+          const period = wlArgs.startDate && wlArgs.endDate
+            ? `${wlArgs.startDate} – ${wlArgs.endDate}`
+            : `school year ${wlArgs.schoolYearId}`;
+          result = { teacherId: wlArgs.teacherId, period, ...wlResult };
           break;
         }
 
@@ -609,7 +635,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
 
         case TOOLS.GET_TEACHERS_FOR_CLASS: {
           const tfcArgs = validatedArgs as any;
-          const rawTeachers = await untisClient.getTeachersForClass(tfcArgs.classId, tfcArgs.days);
+          const rawTeachers = await untisClient.getTeachersForClass(tfcArgs.classId, tfcArgs.days, tfcArgs.schoolYearId);
           const classTeachers = rawTeachers.map((t) => ({
             ...t,
             ...(emailDomain && t.longName ? { email: deriveTeacherEmail(t.longName, emailDomain) } : {}),
@@ -624,7 +650,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
 
         case TOOLS.GET_CLASSES_ON_DAY: {
           const cdArgs = validatedArgs as any;
-          const { schoolYear, classes } = await untisClient.getClassesOnDay(new Date(cdArgs.date));
+          const { schoolYear, classes } = await untisClient.getClassesOnDay(new Date(cdArgs.date), cdArgs.schoolYearId);
           result = { date: cdArgs.date, schoolYear, classes, count: classes.length };
           break;
         }
@@ -634,7 +660,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
           const isoWeekday = parseWeekday(cwArgs.weekday);
           const reference = cwArgs.weekDate ? new Date(cwArgs.weekDate) : new Date();
           const targetDate = dateForWeekdayInWeek(isoWeekday, reference);
-          const { schoolYear, classes } = await untisClient.getClassesOnDay(targetDate);
+          const { schoolYear, classes } = await untisClient.getClassesOnDay(targetDate, cwArgs.schoolYearId);
           result = {
             weekday: WEEKDAY_NAMES_ISO[isoWeekday],
             referenceDate: toISODate(targetDate),

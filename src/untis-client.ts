@@ -158,11 +158,10 @@ export class UntisClient {
     });
   }
 
-  async getTeachersForClass(classId: number, days: number = 30): Promise<Array<{ id: number; name: string; longName: string; title: string }>> {
+  async getTeachersForClass(classId: number, days: number = 30, schoolYearId?: number): Promise<Array<{ id: number; name: string; longName: string; title: string }>> {
     return this.withReconnect(async () => {
       try {
-        const endDate = new Date();
-        const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+        const { start: startDate, end: endDate } = await this.resolveDaysOrSchoolYear(days, schoolYearId);
         const [lessons, allTeachers] = await Promise.all([
           this.getTimetableForClass(classId, startDate, endDate),
           this.getTeachers(),
@@ -199,11 +198,11 @@ export class UntisClient {
     });
   }
 
-  async getClasses(): Promise<any[]> {
+  async getClasses(schoolYearId?: number): Promise<any[]> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        return await client.getClasses(true, undefined as unknown as number) || [];
+        return await client.getClasses(true, schoolYearId as unknown as number) || [];
       } catch (error) {
         throw new Error(`Failed to fetch classes: ${error}`);
       }
@@ -232,7 +231,7 @@ export class UntisClient {
     });
   }
 
-  async getTeacherSubjects(days: number = 3): Promise<Record<string, string[]>> {
+  async getTeacherSubjects(days: number = 3, schoolYearId?: number): Promise<Record<string, string[]>> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
@@ -240,9 +239,8 @@ export class UntisClient {
         const subjectMap: Record<string, Set<string>> = {};
         teachers.forEach((teacher: any) => { subjectMap[teacher.name] = new Set(); });
 
-        const endDate = new Date();
-        const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
-        const classes = await client.getClasses(true, undefined as unknown as number) || [];
+        const { start: startDate, end: endDate } = await this.resolveDaysOrSchoolYear(days, schoolYearId);
+        const classes = await client.getClasses(true, schoolYearId as unknown as number) || [];
 
         await this.batchMap(classes, async (classItem: any) => {
           const timetable = await client.getTimetableForRange(startDate, endDate, classItem.id, WebUntisElementType.CLASS)
@@ -328,11 +326,12 @@ export class UntisClient {
     });
   }
 
-  async getAbsences(startDate: Date, endDate: Date): Promise<any> {
+  async getAbsences(startDate: Date | undefined, endDate: Date | undefined, schoolYearId?: number): Promise<any> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        return await client.getAbsentLesson(startDate, endDate) || {};
+        const { start, end } = await this.resolveDateRange(startDate, endDate, schoolYearId);
+        return await client.getAbsentLesson(start, end) || {};
       } catch (error) {
         throw new Error(`Failed to fetch absences: ${error}`);
       }
@@ -416,13 +415,15 @@ export class UntisClient {
 
   async getTeacherWorkload(
     teacherId: number,
-    startDate: Date,
-    endDate: Date,
+    startDate: Date | undefined,
+    endDate: Date | undefined,
+    schoolYearId?: number,
   ): Promise<{ totalLessons: number; bySubject: Record<string, number>; byDate: Record<string, number> }> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        const timetable = await client.getTimetableForRange(startDate, endDate, teacherId, WebUntisElementType.TEACHER);
+        const { start, end } = await this.resolveDateRange(startDate, endDate, schoolYearId);
+        const timetable = await client.getTimetableForRange(start, end, teacherId, WebUntisElementType.TEACHER);
         const bySubject: Record<string, number> = {};
         const byDate: Record<string, number> = {};
         let totalLessons = 0;
@@ -490,22 +491,24 @@ export class UntisClient {
     });
   }
 
-  async getExams(startDate: Date, endDate: Date, classId?: number): Promise<any[]> {
+  async getExams(startDate: Date | undefined, endDate: Date | undefined, classId?: number, schoolYearId?: number): Promise<any[]> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        return await client.getExamsForRange(startDate, endDate, classId) || [];
+        const { start, end } = await this.resolveDateRange(startDate, endDate, schoolYearId);
+        return await client.getExamsForRange(start, end, classId) || [];
       } catch (error) {
         throw new Error(`Failed to fetch exams: ${error}`);
       }
     });
   }
 
-  async getHomework(startDate: Date, endDate: Date): Promise<any[]> {
+  async getHomework(startDate: Date | undefined, endDate: Date | undefined, schoolYearId?: number): Promise<any[]> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        return await client.getHomeWorksFor(startDate, endDate) || [];
+        const { start, end } = await this.resolveDateRange(startDate, endDate, schoolYearId);
+        return await client.getHomeWorksFor(start, end) || [];
       } catch (error) {
         throw new Error(`Failed to fetch homework: ${error}`);
       }
@@ -525,6 +528,40 @@ export class UntisClient {
         throw new Error(`Failed to fetch school year: ${error}`);
       }
     });
+  }
+
+  // Resolve a concrete {start, end} pair from optional explicit dates + optional schoolYearId.
+  // schoolYearId fills in any missing boundary; explicit dates always win.
+  private async resolveDateRange(
+    startDate: Date | undefined,
+    endDate: Date | undefined,
+    schoolYearId?: number,
+  ): Promise<{ start: Date; end: Date }> {
+    let start = startDate;
+    let end = endDate;
+    if (schoolYearId !== undefined) {
+      const year = await this.findSchoolYear(schoolYearId);
+      if (!year) throw new Error(`School year ${schoolYearId} not found`);
+      if (!start) start = year.startDate;
+      if (!end) end = year.endDate;
+    }
+    if (!start || !end) throw new Error('startDate and endDate are required when schoolYearId is not provided');
+    return { start, end };
+  }
+
+  // Resolve a {start, end} pair from a days-back window or an explicit school year.
+  // schoolYearId takes full precedence; days is the fallback.
+  private async resolveDaysOrSchoolYear(
+    days: number,
+    schoolYearId?: number,
+  ): Promise<{ start: Date; end: Date }> {
+    if (schoolYearId !== undefined) {
+      const year = await this.findSchoolYear(schoolYearId);
+      if (!year) throw new Error(`School year ${schoolYearId} not found`);
+      return { start: year.startDate, end: year.endDate };
+    }
+    const end = new Date();
+    return { start: new Date(end.getTime() - days * 24 * 60 * 60 * 1000), end };
   }
 
   // Find the school year whose date range contains the given date.
@@ -560,14 +597,21 @@ export class UntisClient {
   // All classes of the school year matching `date` that have at least one
   // non-cancelled lesson on that exact day, each with its lesson count.
   // Per-class timetable fetches are throttled via batchMap (limit 5).
-  async getClassesOnDay(date: Date): Promise<{
+  async getClassesOnDay(date: Date, schoolYearId?: number): Promise<{
     schoolYear: { id: number; name: string } | null;
     classes: Array<{ id: number; name: string; longName: string; lessonCount: number }>;
   }> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        const schoolYear = await this.resolveSchoolYear(date);
+        let schoolYear: { id: number; name: string } | null;
+        if (schoolYearId !== undefined) {
+          const year = await this.findSchoolYear(schoolYearId);
+          if (!year) throw new Error(`School year ${schoolYearId} not found`);
+          schoolYear = { id: year.id, name: year.name };
+        } else {
+          schoolYear = await this.resolveSchoolYear(date);
+        }
         const classes =
           (await client.getClasses(true, schoolYear?.id as number)) || [];
 
@@ -677,7 +721,7 @@ export class UntisClient {
         const today = new Date();
         const [year, allClassesRaw] = await Promise.all([
           this.findSchoolYear(schoolYearId),
-          client.getClasses(true, undefined as unknown as number),
+          client.getClasses(true, schoolYearId as unknown as number),
         ]);
         const allClasses: any[] = allClassesRaw || [];
         const rangeStart = startDate ?? (year ? year.startDate : today);

@@ -31,7 +31,7 @@ class StubUntisClient extends UntisClient {
   override async logout(): Promise<void> { /* no-op */ }
 
   override async getTeachers() { return [STUB_TEACHER]; }
-  override async getClasses() { return [STUB_CLASS]; }
+  override async getClasses(_schoolYearId?: number) { return [STUB_CLASS]; }
   override async getRooms() { return [STUB_ROOM]; }
   override async getStudents() { return [STUB_STUDENT]; }
   override async getSubjects() { return [STUB_SUBJECT]; }
@@ -46,19 +46,19 @@ class StubUntisClient extends UntisClient {
       all: [{ id: 1, name: '2025/26', startDate: 20250901, endDate: 20260630 }],
     };
   }
-  override async getAbsences() {
+  override async getAbsences(_startDate?: Date, _endDate?: Date, _schoolYearId?: number) {
     return { absences: [{ id: 1, date: 20260518, startTime: 800, endTime: 850 }] };
   }
-  override async getExams() {
+  override async getExams(_startDate?: Date, _endDate?: Date, _classId?: number, _schoolYearId?: number) {
     return [{ id: 1, name: 'Prüfung', examType: 'SA', subject: 'M', examDate: 20260518, startTime: 800, endTime: 850, studentClass: ['3A'], teachers: ['MUS'], rooms: ['A01'], text: '' }];
   }
-  override async getHomework() {
+  override async getHomework(_startDate?: Date, _endDate?: Date, _schoolYearId?: number) {
     return [{ id: 1, lessonId: 10, date: 20260518, dueDate: 20260520, text: 'Aufgabe', remark: '', completed: false }];
   }
   override async getNews() {
     return { messagesOfDay: [{ id: 1, subject: 'Info', text: 'Heute kein Sport' }], rssUrl: 'https://example.com/rss' };
   }
-  override async getTeacherSubjects() { return { MUS: ['Mathematik'] }; }
+  override async getTeacherSubjects(_days?: number, _schoolYearId?: number) { return { MUS: ['Mathematik'] }; }
   override async getTimetableForClass() { return [STUB_LESSON]; }
   override async getTimetableForTeacher() { return [STUB_LESSON]; }
   override async getTimetableForRoom() { return [STUB_LESSON]; }
@@ -66,7 +66,7 @@ class StubUntisClient extends UntisClient {
     return { available: true, conflictingLessons: [] };
   }
   override async findAvailableRooms() { return [STUB_ROOM]; }
-  override async getTeacherWorkload() {
+  override async getTeacherWorkload(_teacherId: number, _startDate?: Date, _endDate?: Date, _schoolYearId?: number) {
     return { totalLessons: 3, bySubject: { Mathematik: 3 }, byDate: { '2026-05-18': 3 } };
   }
   override async getWeekOverview() {
@@ -81,10 +81,10 @@ class StubUntisClient extends UntisClient {
   override async findSubstituteTeachers() {
     return [{ id: 1, name: 'MUS', longName: 'Mustermann Max', teachesSubjectToday: true }];
   }
-  override async getTeachersForClass() {
+  override async getTeachersForClass(_classId: number, _days?: number, _schoolYearId?: number) {
     return [{ id: 1, name: 'MUS', longName: 'Mustermann Max', title: 'Mag.' }];
   }
-  override async getClassesOnDay() {
+  override async getClassesOnDay(_date: Date, _schoolYearId?: number) {
     return {
       schoolYear: { id: 1, name: '2025/26' },
       classes: [{ id: 10, name: '3A', longName: 'Klasse 3A', lessonCount: 4 }],
@@ -479,5 +479,71 @@ describe('getTeachersForClass', () => {
   it('uses default days', async () => {
     const data = await callTool('getTeachersForClass', { classId: 10 });
     expect(data.count).toBe(1);
+  });
+
+  it('accepts schoolYearId', async () => {
+    const data = await callTool('getTeachersForClass', { classId: 10, schoolYearId: 42 });
+    expect(data.count).toBe(1);
+  });
+});
+
+// ─── schoolYearId integration in handlers ─────────────────────────────────────
+
+describe('getClasses with schoolYearId', () => {
+  it('accepts schoolYearId and returns class list', async () => {
+    const data = await callTool('getClasses', { schoolYearId: 42 });
+    expect(data.classes[0].name).toBe('3A');
+  });
+});
+
+describe('getAbsences with schoolYearId', () => {
+  it('accepts schoolYearId without dates', async () => {
+    const data = await callTool('getAbsences', { schoolYearId: 42 });
+    expect(Array.isArray(data.absences)).toBe(true);
+  });
+});
+
+describe('getExams with schoolYearId', () => {
+  it('accepts schoolYearId without dates', async () => {
+    const data = await callTool('getExams', { schoolYearId: 42 });
+    expect(Array.isArray(data.exams)).toBe(true);
+  });
+});
+
+describe('getHomework with schoolYearId', () => {
+  it('accepts schoolYearId without dates', async () => {
+    const data = await callTool('getHomework', { schoolYearId: 42 });
+    expect(data.count).toBe(1);
+  });
+});
+
+describe('getTeacherWorkload with schoolYearId', () => {
+  it('accepts teacherId + schoolYearId without dates', async () => {
+    const data = await callTool('getTeacherWorkload', { teacherId: 1, schoolYearId: 42 });
+    expect(data.teacherId).toBe(1);
+    expect(data.totalLessons).toBe(3);
+  });
+});
+
+describe('getTeacherSubjects with schoolYearId', () => {
+  it('accepts schoolYearId and returns teacher-subject mapping', async () => {
+    const data = await callTool('getTeacherSubjects', { schoolYearId: 42 });
+    expect(data.teacherSubjects.MUS).toContain('Mathematik');
+    expect(data.description).toContain('42');
+  });
+});
+
+describe('getClassesOnDay with schoolYearId', () => {
+  it('accepts date + schoolYearId', async () => {
+    const data = await callTool('getClassesOnDay', { date: '2026-05-18', schoolYearId: 42 });
+    expect(data.classes[0].name).toBe('3A');
+    expect(data.schoolYear.name).toBe('2025/26');
+  });
+});
+
+describe('classOnWeekDay with schoolYearId', () => {
+  it('accepts weekday + schoolYearId', async () => {
+    const data = await callTool('classOnWeekDay', { weekday: 'Montag', schoolYearId: 42 });
+    expect(data.classes[0].name).toBe('3A');
   });
 });

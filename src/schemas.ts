@@ -30,6 +30,10 @@ export const TOOLS = {
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format');
 export const hmmTimeSchema = z.number().int().min(0).max(2359);
+const schoolYearIdField = z.number().int().positive().optional();
+const datesOrSchoolYear = (d: { startDate?: string; endDate?: string; schoolYearId?: number }) =>
+  (!!d.startDate && !!d.endDate) || !!d.schoolYearId;
+const datesOrSchoolYearMsg = 'Provide either startDate+endDate or schoolYearId';
 
 export const toolSchemas = {
   [TOOLS.GET_TIMETABLE]: z.object({
@@ -43,16 +47,20 @@ export const toolSchemas = {
     'Must provide classId, teacherId, or roomId'
   ),
   [TOOLS.GET_TEACHERS]: z.object({}),
-  [TOOLS.GET_CLASSES]: z.object({}),
+  [TOOLS.GET_CLASSES]: z.object({
+    schoolYearId: schoolYearIdField,
+  }),
   [TOOLS.GET_ROOMS]: z.object({}),
   [TOOLS.GET_STUDENTS]: z.object({}),
   [TOOLS.GET_ABSENCES]: z.object({
-    startDate: dateSchema,
-    endDate: dateSchema,
-  }),
+    startDate: dateSchema.optional(),
+    endDate: dateSchema.optional(),
+    schoolYearId: schoolYearIdField,
+  }).refine(datesOrSchoolYear, { message: datesOrSchoolYearMsg }),
   [TOOLS.GET_SUBJECTS_LIST]: z.object({}),
   [TOOLS.GET_TEACHER_SUBJECTS]: z.object({
     days: z.number().int().min(1).max(365).optional().default(7),
+    schoolYearId: schoolYearIdField,
   }),
   [TOOLS.GET_TIMEGRID]: z.object({}),
   [TOOLS.GET_HOLIDAYS]: z.object({}),
@@ -70,23 +78,26 @@ export const toolSchemas = {
   }),
   [TOOLS.GET_TEACHER_WORKLOAD]: z.object({
     teacherId: z.number().int(),
-    startDate: dateSchema,
-    endDate: dateSchema,
-  }),
+    startDate: dateSchema.optional(),
+    endDate: dateSchema.optional(),
+    schoolYearId: schoolYearIdField,
+  }).refine(datesOrSchoolYear, { message: datesOrSchoolYearMsg }),
   [TOOLS.GET_WEEK_OVERVIEW]: z.object({
     classId: z.number().int().optional(),
     teacherId: z.number().int().optional(),
     weekDate: dateSchema,
   }).refine((d) => d.classId || d.teacherId, 'Must provide classId or teacherId'),
   [TOOLS.GET_EXAMS]: z.object({
-    startDate: dateSchema,
-    endDate: dateSchema,
+    startDate: dateSchema.optional(),
+    endDate: dateSchema.optional(),
     classId: z.number().int().optional(),
-  }),
+    schoolYearId: schoolYearIdField,
+  }).refine(datesOrSchoolYear, { message: datesOrSchoolYearMsg }),
   [TOOLS.GET_HOMEWORK]: z.object({
-    startDate: dateSchema,
-    endDate: dateSchema,
-  }),
+    startDate: dateSchema.optional(),
+    endDate: dateSchema.optional(),
+    schoolYearId: schoolYearIdField,
+  }).refine(datesOrSchoolYear, { message: datesOrSchoolYearMsg }),
   [TOOLS.GET_SCHOOL_YEAR]: z.object({}),
   [TOOLS.GET_NEWS]: z.object({
     date: dateSchema.optional(),
@@ -101,13 +112,16 @@ export const toolSchemas = {
   [TOOLS.GET_TEACHERS_FOR_CLASS]: z.object({
     classId: z.number().int(),
     days: z.number().int().min(1).max(365).optional().default(30),
+    schoolYearId: schoolYearIdField,
   }),
   [TOOLS.GET_CLASSES_ON_DAY]: z.object({
     date: dateSchema,
+    schoolYearId: schoolYearIdField,
   }),
   [TOOLS.CLASS_ON_WEEKDAY]: z.object({
     weekday: z.union([z.number().int().min(1).max(7), z.string().min(1)]),
     weekDate: dateSchema.optional(),
+    schoolYearId: schoolYearIdField,
   }),
   [TOOLS.GET_YEARLY_TIMETABLE_FOR_CLASS]: z.object({
     classId: z.number().int(),
