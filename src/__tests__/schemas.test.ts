@@ -262,3 +262,47 @@ describe('getTeachersForClass', () => {
     expect(() => schema.parse({ classId: 10, days: 366 })).toThrow();
   });
 });
+
+describe('getYearlyTimetableForClass', () => {
+  const schema = toolSchemas[TOOLS.GET_YEARLY_TIMETABLE_FOR_CLASS];
+
+  it('accepts classId only', () => {
+    expect(() => schema.parse({ classId: 42 })).not.toThrow();
+  });
+
+  it('accepts classId with schoolYearId', () => {
+    expect(() => schema.parse({ classId: 42, schoolYearId: 1 })).not.toThrow();
+  });
+
+  it('fails without classId', () => {
+    expect(() => schema.parse({})).toThrow();
+  });
+
+  it('fails with non-integer classId', () => {
+    expect(() => schema.parse({ classId: 1.5 })).toThrow();
+  });
+});
+
+describe('getLessonsForSubject', () => {
+  const schema = toolSchemas[TOOLS.GET_LESSONS_FOR_SUBJECT];
+
+  it('accepts subjectName only', () => {
+    expect(() => schema.parse({ subjectName: 'Mathematik' })).not.toThrow();
+  });
+
+  it('accepts all optional params', () => {
+    expect(() => schema.parse({ subjectName: 'M', classId: 10, schoolYearId: 1, startDate: validDate, endDate: validDate })).not.toThrow();
+  });
+
+  it('fails without subjectName', () => {
+    expect(() => schema.parse({})).toThrow();
+  });
+
+  it('fails with empty subjectName', () => {
+    expect(() => schema.parse({ subjectName: '' })).toThrow();
+  });
+
+  it('fails with invalid startDate format', () => {
+    expect(() => schema.parse({ subjectName: 'M', startDate: '18/05/2026' })).toThrow();
+  });
+});

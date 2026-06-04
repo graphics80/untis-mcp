@@ -90,6 +90,31 @@ class StubUntisClient extends UntisClient {
       classes: [{ id: 10, name: '3A', longName: 'Klasse 3A', lessonCount: 4 }],
     };
   }
+
+  override async getYearlyTimetableForClass(classId: number) {
+    return {
+      schoolYear: { name: '2025/26', startDate: '2025-09-01', endDate: '2026-06-30' },
+      classId,
+      totalLessons: 1,
+      quarters: [
+        { quarter: 1, startDate: '2025-09-01', endDate: '2025-11-15', lessonCount: 1,
+          lessons: [{ id: 42, date: '2025-09-01', startTime: '2025-09-01T08:00:00+02:00', endTime: '2025-09-01T08:45:00+02:00', subject: 'Mathematik', teachers: ['MUS'], rooms: ['A101'], cancelled: false, substitution: false }] },
+        { quarter: 2, startDate: '2025-11-16', endDate: '2026-02-01', lessonCount: 0, lessons: [] },
+        { quarter: 3, startDate: '2026-02-02', endDate: '2026-04-19', lessonCount: 0, lessons: [] },
+        { quarter: 4, startDate: '2026-04-20', endDate: '2026-06-30', lessonCount: 0, lessons: [] },
+      ],
+    };
+  }
+
+  override async getLessonsForSubject(subjectName: string) {
+    return {
+      subject: subjectName,
+      dateRange: { startDate: '2025-09-01', endDate: '2026-06-30' },
+      totalLessons: 1,
+      byDate: [{ date: '2025-09-01', lessons: [{ class: '3A', teachers: ['MUS'], rooms: ['A101'], startTime: '2025-09-01T08:00:00+02:00', endTime: '2025-09-01T08:45:00+02:00', cancelled: false }] }],
+      byClass: [{ class: '3A', lessonCount: 1, lessons: [{ date: '2025-09-01', teachers: ['MUS'], rooms: ['A101'], startTime: '2025-09-01T08:00:00+02:00', endTime: '2025-09-01T08:45:00+02:00', cancelled: false }] }],
+    };
+  }
 }
 
 // ─── Client/Server wiring ──────────────────────────────────────────────────────
@@ -121,9 +146,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 23 tools', async () => {
+  it('returns all 25 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(25);
     const names = tools.map(t => t.name);
     expect(names).toContain('getTeachers');
     expect(names).toContain('getTimetable');
@@ -360,6 +385,67 @@ describe('classOnWeekDay', () => {
 
   it('rejects an invalid weekday', async () => {
     const result = await client.callTool({ name: 'classOnWeekDay', arguments: { weekday: 'Funday' } });
+    expect(result.isError).toBe(true);
+  });
+});
+
+// ─── getYearlyTimetableForClass ───────────────────────────────────────────────
+
+describe('getYearlyTimetableForClass', () => {
+  it('returns yearly timetable split into 4 quarters', async () => {
+    const data = await callTool('getYearlyTimetableForClass', { classId: 10 });
+    expect(data.classId).toBe(10);
+    expect(data.schoolYear.name).toBe('2025/26');
+    expect(data.quarters).toHaveLength(4);
+    expect(typeof data.totalLessons).toBe('number');
+    expect(data.quarters[0].quarter).toBe(1);
+    expect(Array.isArray(data.quarters[0].lessons)).toBe(true);
+  });
+
+  it('accepts optional schoolYearId', async () => {
+    const data = await callTool('getYearlyTimetableForClass', { classId: 10, schoolYearId: 1 });
+    expect(data.classId).toBe(10);
+  });
+
+  it('rejects missing classId', async () => {
+    const result = await client.callTool({ name: 'getYearlyTimetableForClass', arguments: {} });
+    expect(result.isError).toBe(true);
+  });
+});
+
+// ─── getLessonsForSubject ─────────────────────────────────────────────────────
+
+describe('getLessonsForSubject', () => {
+  it('returns lessons grouped by date and by class', async () => {
+    const data = await callTool('getLessonsForSubject', { subjectName: 'Mathematik' });
+    expect(data.subject).toBe('Mathematik');
+    expect(Array.isArray(data.byDate)).toBe(true);
+    expect(Array.isArray(data.byClass)).toBe(true);
+    expect(typeof data.totalLessons).toBe('number');
+    expect(data.dateRange.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('accepts optional classId and schoolYearId', async () => {
+    const data = await callTool('getLessonsForSubject', { subjectName: 'M', classId: 10, schoolYearId: 1 });
+    expect(data.subject).toBe('M');
+  });
+
+  it('accepts optional date range', async () => {
+    const data = await callTool('getLessonsForSubject', {
+      subjectName: 'M',
+      startDate: '2025-09-01',
+      endDate: '2026-06-30',
+    });
+    expect(data.subject).toBe('M');
+  });
+
+  it('rejects missing subjectName', async () => {
+    const result = await client.callTool({ name: 'getLessonsForSubject', arguments: {} });
+    expect(result.isError).toBe(true);
+  });
+
+  it('rejects empty subjectName', async () => {
+    const result = await client.callTool({ name: 'getLessonsForSubject', arguments: { subjectName: '' } });
     expect(result.isError).toBe(true);
   });
 });

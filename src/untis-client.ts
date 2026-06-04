@@ -572,6 +572,175 @@ export class UntisClient {
     });
   }
 
+  async getYearlyTimetableForClass(classId: number, schoolYearId?: number): Promise<{
+    schoolYear: { name: string; startDate: string; endDate: string };
+    classId: number;
+    totalLessons: number;
+    quarters: Array<{
+      quarter: number;
+      startDate: string;
+      endDate: string;
+      lessonCount: number;
+      lessons: Array<{
+        id: number;
+        date: string;
+        startTime: string;
+        endTime: string;
+        subject: string;
+        teachers: string[];
+        rooms: string[];
+        cancelled: boolean;
+        substitution: boolean;
+      }>;
+    }>;
+  }> {
+    return this.withReconnect(async () => {
+      const client = this.ensureClient();
+      try {
+        const years = (await client.getSchoolyears()) || [];
+        const year = schoolYearId
+          ? years.find((y: any) => y.id === schoolYearId)
+          : years.find((y: any) => { const now = new Date(); return y.startDate <= now && now <= y.endDate; });
+        if (!year) throw new Error(schoolYearId ? `School year ${schoolYearId} not found` : 'No school year found for today');
+
+        const syStart: Date = year.startDate;
+        const syEnd: Date = year.endDate;
+        const DAY = 86400000;
+        const totalDays = Math.round((syEnd.getTime() - syStart.getTime()) / DAY);
+
+        const splits = [1, 2, 3].map(i => Math.floor(i * totalDays / 4));
+        const quarterRanges: [Date, Date][] = [
+          [syStart,                                                     new Date(syStart.getTime() + splits[0] * DAY - DAY)],
+          [new Date(syStart.getTime() + splits[0] * DAY), new Date(syStart.getTime() + splits[1] * DAY - DAY)],
+          [new Date(syStart.getTime() + splits[1] * DAY), new Date(syStart.getTime() + splits[2] * DAY - DAY)],
+          [new Date(syStart.getTime() + splits[2] * DAY), syEnd],
+        ];
+
+        const quarterResults = [];
+        for (let i = 0; i < quarterRanges.length; i++) {
+          const [qStart, qEnd] = quarterRanges[i];
+          const raw = (await client.getTimetableForRange(qStart, qEnd, classId, WebUntisElementType.CLASS).catch(() => [])) || [];
+          const mapped = (raw as any[]).map((lesson: any) => ({
+            id: lesson.id,
+            date: UntisClient.untisDateToISO(lesson.date),
+            startTime: this.formatTimeToISO(lesson.startTime, lesson.date),
+            endTime: this.formatTimeToISO(lesson.endTime, lesson.date),
+            subject: lesson.su?.[0]?.name || '',
+            teachers: (lesson.te as any[])?.map((t: any) => t.name) || [],
+            rooms: (lesson.ro as any[])?.map((r: any) => r.name) || [],
+            cancelled: lesson.code === 'cancelled',
+            substitution: lesson.code === 'irregular',
+          }));
+          mapped.sort((a, b) => a.date.localeCompare(b.date));
+          quarterResults.push({
+            quarter: i + 1,
+            startDate: toISODate(qStart),
+            endDate: toISODate(qEnd),
+            lessonCount: mapped.length,
+            lessons: mapped,
+          });
+        }
+
+        return {
+          schoolYear: { name: year.name, startDate: toISODate(syStart), endDate: toISODate(syEnd) },
+          classId,
+          totalLessons: quarterResults.reduce((sum, q) => sum + q.lessonCount, 0),
+          quarters: quarterResults,
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch yearly timetable: ${error}`);
+      }
+    });
+  }
+
+  async getLessonsForSubject(
+    subjectName: string,
+    classId?: number,
+    schoolYearId?: number,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{
+    subject: string;
+    dateRange: { startDate: string; endDate: string };
+    totalLessons: number;
+    byDate: Array<{ date: string; lessons: Array<{ class: string; teachers: string[]; rooms: string[]; startTime: string; endTime: string; cancelled: boolean }> }>;
+    byClass: Array<{ class: string; lessonCount: number; lessons: Array<{ date: string; teachers: string[]; rooms: string[]; startTime: string; endTime: string; cancelled: boolean }> }>;
+  }> {
+    return this.withReconnect(async () => {
+      const client = this.ensureClient();
+      try {
+        const today = new Date();
+        const years = (await client.getSchoolyears()) || [];
+        const year = schoolYearId
+          ? years.find((y: any) => y.id === schoolYearId)
+          : years.find((y: any) => y.startDate <= today && today <= y.endDate);
+        const rangeStart = startDate ?? (year ? year.startDate : today);
+        const rangeEnd = endDate ?? (year ? year.endDate : today);
+
+        const allClasses = (await client.getClasses(true, undefined as unknown as number)) || [];
+        const classesToSearch: any[] = classId
+          ? allClasses.filter((c: any) => c.id === classId)
+          : allClasses;
+        const subjectLower = subjectName.toLowerCase();
+
+        type ClassLessons = {
+          className: string;
+          lessons: Array<{ date: string; teachers: string[]; rooms: string[]; startTime: string; endTime: string; cancelled: boolean }>;
+        };
+
+        const perClass = await this.batchMap<any, ClassLessons>(classesToSearch, async (klasse: any) => {
+          try {
+            const timetable = (await client.getTimetableForRange(rangeStart, rangeEnd, klasse.id, WebUntisElementType.CLASS).catch(() => null)) || [];
+            const matching = (timetable as any[]).filter((lesson: any) =>
+              (lesson.su as any[])?.some((s: any) => s.name?.toLowerCase().includes(subjectLower))
+            );
+            if (matching.length === 0) return null;
+            return {
+              className: klasse.name,
+              lessons: matching.map((lesson: any) => ({
+                date: UntisClient.untisDateToISO(lesson.date),
+                teachers: (lesson.te as any[])?.map((t: any) => t.name) || [],
+                rooms: (lesson.ro as any[])?.map((r: any) => r.name) || [],
+                startTime: this.formatTimeToISO(lesson.startTime, lesson.date),
+                endTime: this.formatTimeToISO(lesson.endTime, lesson.date),
+                cancelled: lesson.code === 'cancelled',
+              })),
+            };
+          } catch {
+            return null;
+          }
+        });
+
+        const dateMap = new Map<string, Array<{ class: string; teachers: string[]; rooms: string[]; startTime: string; endTime: string; cancelled: boolean }>>();
+        for (const c of perClass) {
+          for (const lesson of c.lessons) {
+            const entry = dateMap.get(lesson.date) ?? [];
+            entry.push({ class: c.className, teachers: lesson.teachers, rooms: lesson.rooms, startTime: lesson.startTime, endTime: lesson.endTime, cancelled: lesson.cancelled });
+            dateMap.set(lesson.date, entry);
+          }
+        }
+
+        const byDate = [...dateMap.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, lessons]) => ({ date, lessons }));
+
+        const byClass = perClass
+          .sort((a, b) => a.className.localeCompare(b.className))
+          .map(c => ({ class: c.className, lessonCount: c.lessons.length, lessons: c.lessons }));
+
+        return {
+          subject: subjectName,
+          dateRange: { startDate: toISODate(rangeStart), endDate: toISODate(rangeEnd) },
+          totalLessons: perClass.reduce((sum, c) => sum + c.lessons.length, 0),
+          byDate,
+          byClass,
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch lessons for subject: ${error}`);
+      }
+    });
+  }
+
   async getNews(date: Date): Promise<any> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();

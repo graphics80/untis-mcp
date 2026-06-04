@@ -234,6 +234,33 @@ const TOOL_LIST = [
             required: ['weekday'],
           },
         },
+        {
+          name: TOOLS.GET_YEARLY_TIMETABLE_FOR_CLASS,
+          description: 'Get all lessons for a class across a full school year, split into four quarters. Use this to see the annual schedule and detect schedule changes between quarters. Call getSchoolYear first to find available school year IDs.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              classId: { type: 'number', description: 'Class ID' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional, use getSchoolYear to find IDs; defaults to current year)' },
+            },
+            required: ['classId'],
+          },
+        },
+        {
+          name: TOOLS.GET_LESSONS_FOR_SUBJECT,
+          description: 'Get all scheduled lessons for a subject across all classes (or a specific class) within a date range (defaults to current school year). Returns results grouped by date and by class. Call getSchoolYear first to find available school year IDs.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              subjectName: { type: 'string', description: 'Subject name or partial name (case-insensitive substring match)' },
+              classId: { type: 'number', description: 'Class ID (optional). When provided, only this class is searched instead of all classes.' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional, use getSchoolYear to find IDs; sets the default date range)' },
+              startDate: { type: 'string', description: 'Start date (YYYY-MM-DD, optional, overrides school year start)' },
+              endDate: { type: 'string', description: 'End date (YYYY-MM-DD, optional, overrides school year end)' },
+            },
+            required: ['subjectName'],
+          },
+        },
 ];
 
 export function registerHandlers(server: Server, untisClient: UntisClient, emailDomain?: string): void {
@@ -615,6 +642,20 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
             classes,
             count: classes.length,
           };
+          break;
+        }
+
+        case TOOLS.GET_YEARLY_TIMETABLE_FOR_CLASS: {
+          const ytArgs = validatedArgs as any;
+          result = await untisClient.getYearlyTimetableForClass(ytArgs.classId, ytArgs.schoolYearId);
+          break;
+        }
+
+        case TOOLS.GET_LESSONS_FOR_SUBJECT: {
+          const lfsArgs = validatedArgs as any;
+          const lfsStart = lfsArgs.startDate ? new Date(lfsArgs.startDate) : undefined;
+          const lfsEnd = lfsArgs.endDate ? new Date(lfsArgs.endDate) : undefined;
+          result = await untisClient.getLessonsForSubject(lfsArgs.subjectName, lfsArgs.classId, lfsArgs.schoolYearId, lfsStart, lfsEnd);
           break;
         }
 
