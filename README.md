@@ -1,6 +1,6 @@
 # untis-mcp
 
-HTTP MCP server that gives Claude AI read access to WebUntis school scheduling data. Runs as a Docker container behind a reverse proxy. Teachers connect through claude.ai using OAuth — no WebUntis credentials required on their end.
+HTTP MCP server that gives Claude AI read access to WebUntis school scheduling data. Runs as a Docker container behind a reverse proxy. Teachers connect through claude.ai with a single secret URL — no login form, no WebUntis credentials required on their end.
 
 Live at **[https://mcp.it.bzz.ch/untis](https://mcp.it.bzz.ch/untis)** (BZZ Berufsschule Zürich).
 
@@ -13,25 +13,24 @@ For deployment instructions see [DEPLOY.md](DEPLOY.md).
 ```
 claude.ai
     │
-    │  OAuth 2.0 Authorization Code + PKCE
-    │  (teacher logs in with MCP credentials)
+    │  Streamable HTTP (no OAuth)
+    │  connector URL: https://<host>/untis/<MCP_SECRET>
     ▼
 untis-mcp  (Docker, Node.js/TypeScript)
-    │  src/server.ts          — Express HTTP server, OAuth endpoints, MCP endpoint
-    │  src/mcp-handlers.ts    — 20 MCP tool definitions
+    │  src/server.ts          — Express HTTP server, secret-gated MCP endpoint
+    │  src/mcp-handlers.ts    — MCP tool definitions
     │  src/untis-client.ts    — WebUntis API wrapper with auto-reconnect
     │  src/http/
-    │    oauth-store.ts       — Auth codes + access tokens (in-memory, TTL'd)
-    │    transport-manager.ts — StreamableHTTP MCP transport
+    │    transport-manager.ts — StreamableHTTP MCP transport (one per session)
     │
     │  WebUntis JSON-RPC (shared service account)
     ▼
 bzz.webuntis.com
 ```
 
-**Auth model:** Teachers log in with credentials defined by the admin (`MCP_USERS` env var). Behind the scenes, all WebUntis queries run through a single shared service account. Teachers do not need individual WebUntis logins.
+**Auth model:** The path secret (`MCP_SECRET`) *is* the authentication — anyone who knows the full URL `https://<host>/untis/<MCP_SECRET>` can use the server, so treat it like a password. Requests to the wrong (or missing) secret get a flat `404`. Behind the scenes, all WebUntis queries run through a single shared service account; teachers need no individual WebUntis logins. Because the secret rides in the URL path, keep it out of access logs (see [DEPLOY.md](DEPLOY.md)) and always serve over HTTPS.
 
-**Sessions:** Each access token gets its own WebUntis session. Sessions live for 1 hour (matching the token TTL) and are swept automatically. WebUntis session expiry is handled transparently with auto-reconnect.
+**Sessions:** Each MCP client connection gets its own WebUntis session, keyed by the transport-assigned `Mcp-Session-Id`. Idle sessions are swept after 24h; clients transparently re-initialize (the transport answers `404` to a stale session id, per the MCP spec). WebUntis session expiry is handled transparently with auto-reconnect.
 
 ---
 
@@ -73,7 +72,7 @@ bzz.webuntis.com
 | `WEBUNTIS_BASE_URL` | Yes | WebUntis server domain (e.g. `bzz.webuntis.com`) |
 | `WEBUNTIS_USERNAME` | Yes | Shared service account username |
 | `WEBUNTIS_PASSWORD` | Yes | Shared service account password |
-| `MCP_USERS` | Yes | Teacher logins: `user1:pass1,user2:pass2` |
+| `MCP_SECRET` | No | Secret URL token (the auth). Auto-generated at startup if unset — set it to keep a stable connector URL |
 | `BASE_URL` | Yes | Public HTTPS URL of this server (no trailing slash) |
 | `PORT` | No | HTTP port (default: `3000`) |
 | `SCHOOL_TIMEZONE` | No | IANA timezone (default: `Europe/Zurich`) |
@@ -101,8 +100,8 @@ These depend on features being enabled on your school's Untis instance — conta
 **`findSubstituteTeachers` is slow**
 It scans `qualificationDays` (default 14) of timetable history. Pass a smaller value for faster results.
 
-**Teacher can't log in**
-Check that their entry is correct in `MCP_USERS` in `.env.production` on the server. Remember to restart after any change (`docker compose restart`).
+**Connector won't connect / returns 404**
+Confirm the URL ends with the exact `MCP_SECRET` (`https://<host>/untis/<secret>`). A wrong or missing secret returns `404` by design. If `MCP_SECRET` is unset, the server prints a fresh random one to the logs on every restart — set it in `.env.production` to keep the URL stable.
 
 ---
 

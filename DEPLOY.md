@@ -2,7 +2,7 @@
 
 This guide explains how to deploy untis-mcp on a Linux server so teachers can connect through [claude.ai](https://claude.ai) using the "Add custom connector" dialog.
 
-Teachers log in with credentials you define — no WebUntis credentials required on their end.
+There is no login form: access is gated by a secret token in the connector URL (`https://<host>/untis/<MCP_SECRET>`). You share that one URL with the teachers who should have access — no WebUntis credentials required on their end. Treat the URL like a password.
 
 ## Prerequisites
 
@@ -58,9 +58,10 @@ WEBUNTIS_PASSWORD=your_password
 
 SCHOOL_TIMEZONE=Europe/Zurich
 
-# Teacher accounts — you define these, teachers use them to log in via claude.ai
-# Format: username:password,username:password
-MCP_USERS=lehmann:secretpass,mueller:otherpass
+# Secret URL token — this IS the authentication. Anyone with the full URL
+# https://<host>/untis/<MCP_SECRET> can use the server. Generate a fresh one:
+#   uuidgen        # or:  openssl rand -hex 16
+MCP_SECRET=paste-a-long-random-uuid-here
 
 # Public HTTPS URL of this server (no trailing slash)
 BASE_URL=https://mcp.your-school.example.com
@@ -68,7 +69,9 @@ BASE_URL=https://mcp.your-school.example.com
 PORT=3001
 ```
 
-Keep `.env.production` private — never commit it.
+Keep `.env.production` private — never commit it. If you omit `MCP_SECRET`, the
+server generates a random one at startup and prints it to the logs, but it changes
+on every restart — set a stable value so the connector URL doesn't break.
 
 ---
 
@@ -121,8 +124,15 @@ Create `/etc/apache2/sites-available/mcp.your-school.example.com.conf`:
     # Required for MCP streaming (Server-Sent Events)
     SetEnv proxy-nokeepalive 1
 
+    # IMPORTANT: the connector URL contains MCP_SECRET in its path. The default
+    # "combined" access log records the full request line, which would write that
+    # secret to disk in plaintext. Redact the path for /untis/* requests.
+    SetEnvIf Request_URI "^/untis/" mcp_secret_path
+    LogFormat "%h %l %u %t \"%m /untis/<redacted> %H\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" mcp_redacted
+    CustomLog ${APACHE_LOG_DIR}/mcp_access.log combined env=!mcp_secret_path
+    CustomLog ${APACHE_LOG_DIR}/mcp_access.log mcp_redacted env=mcp_secret_path
+
     ErrorLog ${APACHE_LOG_DIR}/mcp_error.log
-    CustomLog ${APACHE_LOG_DIR}/mcp_access.log combined
 
     SSLCertificateFile /etc/letsencrypt/live/mcp.your-school.example.com/fullchain.pem
     SSLCertificateKeyFile /etc/letsencrypt/live/mcp.your-school.example.com/privkey.pem
@@ -179,44 +189,43 @@ server {
 # Health check
 curl https://mcp.your-school.example.com/health
 
-# OAuth discovery (claude.ai reads this automatically)
-curl https://mcp.your-school.example.com/.well-known/oauth-authorization-server
-
-# MCP endpoint should return 401 (auth required)
+# Wrong/missing secret returns 404 (endpoint is not advertised)
 curl -si https://mcp.your-school.example.com/untis -X POST \
   -H 'Content-Type: application/json' -d '{}'
+
+# The real connector URL (with the secret) accepts an MCP initialize.
+# A non-initialize POST without a session id returns 400 — that's expected and
+# confirms the secret is accepted:
+curl -si https://mcp.your-school.example.com/untis/<MCP_SECRET> -X POST \
+  -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 ```
 
 ---
 
 ## 7. Connect in claude.ai
 
-1. Open [claude.ai](https://claude.ai) → Settings → Integrations
+1. Open [claude.ai](https://claude.ai) → Settings → Connectors
 2. Click **Add custom connector**
-3. Enter the MCP URL: `https://mcp.your-school.example.com/untis`
-4. Click **Connect** — claude.ai redirects to the login form
-5. Teacher enters the username and password you defined in `MCP_USERS`
-6. Done — the Untis tools are now available in Claude
+3. Enter the full MCP URL **including the secret**: `https://mcp.your-school.example.com/untis/<MCP_SECRET>`
+4. Leave the OAuth/Advanced settings empty — this server is authless
+5. Click **Add** — the Untis tools are now available in Claude
 
-Each teacher repeats steps 1–6 with their own credentials.
+Share that one URL with each teacher who should have access. Anyone with the URL is in, so distribute it over a private channel and never paste it anywhere public.
 
 ---
 
-## Managing teacher accounts
+## Managing access / rotating the secret
 
-Edit `.env.production` on the server and restart the container:
+The secret URL is the only credential. To revoke everyone (e.g. it leaked), change `MCP_SECRET` and restart:
 
 ```bash
 nano /home/mcp/untis-mcp/.env.production
-# Edit MCP_USERS=...
+# Set MCP_SECRET to a fresh value:  uuidgen
 
 docker compose restart   # no rebuild needed
 ```
 
-- **Add a teacher**: append `,name:password` to `MCP_USERS`
-- **Remove a teacher**: delete their entry and restart — their token expires within 1 hour
-- **Change a password**: update their entry and restart
-- Usernames are case-insensitive
+Every teacher must then update their connector URL to the new secret. There are no per-teacher accounts: access is all-or-nothing on the shared URL.
 
 ---
 
@@ -228,7 +237,7 @@ git pull origin main
 docker compose up -d --build
 ```
 
-Teachers will need to re-authenticate after a restart (tokens are in-memory).
+The connector URL is unchanged across restarts as long as `MCP_SECRET` stays the same. Active MCP sessions are in-memory, so clients transparently re-initialize after a restart — no teacher action needed.
 
 ---
 
@@ -253,9 +262,10 @@ docker compose down
 
 ## Security notes
 
-- `.env.production` is never committed — keep it only on the server
-- Access tokens are stored in memory hashed with SHA-256; raw tokens never persist
-- Each teacher gets their own WebUntis session (one per access token), expires after 1 hour
-- WebUntis session expiry is handled transparently with auto-reconnect
-- The container runs as a non-root `node` user
-- Password comparison uses `timingSafeEqual` to prevent timing attacks
+- The path secret (`MCP_SECRET`) **is** the authentication — anyone with the full URL has full read access. Treat it like a password: distribute privately, serve only over HTTPS.
+- **Keep the secret out of logs.** The reverse-proxy access log redacts the `/untis/*` path (see the Apache `mcp_redacted` `LogFormat` above) — verify your config does the same before going live, and check the app/container logs don't echo full URLs.
+- `.env.production` is never committed — keep it only on the server.
+- The secret comparison uses `timingSafeEqual` to prevent timing attacks; a wrong secret returns a flat `404`.
+- Each MCP client connection gets its own WebUntis session, swept after 24h idle. WebUntis session expiry is handled transparently with auto-reconnect.
+- The container runs as a non-root `node` user.
+- This model has **no per-teacher accounts and no individual revocation** — to revoke access you rotate `MCP_SECRET`, which logs everyone out. If you need per-user auth or audit trails, keep the OAuth-based model instead.

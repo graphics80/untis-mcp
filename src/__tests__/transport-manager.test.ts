@@ -1,8 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { randomUUID } from 'crypto';
-import { createMcpStack, handleMcpRequest } from '../http/transport-manager.js';
+import { createMcpStack, handleMcpRequest, McpStackCallbacks } from '../http/transport-manager.js';
 import { UntisClient } from '../untis-client.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -14,16 +13,20 @@ class MinimalStub extends UntisClient {
   override async getTeachers() { return []; }
 }
 
+const noopCallbacks: McpStackCallbacks = {
+  onSessionInitialized: () => {},
+  onSessionClosed: () => {},
+};
+
 describe('createMcpStack', () => {
   it('returns a Server and a StreamableHTTPServerTransport', () => {
-    const stack = createMcpStack(new MinimalStub(), randomUUID());
+    const stack = createMcpStack(new MinimalStub(), undefined, noopCallbacks);
     expect(stack.server).toBeInstanceOf(Server);
     expect(stack.transport).toBeInstanceOf(StreamableHTTPServerTransport);
   });
 
   it('registers MCP tool handlers on the server', () => {
-    const stack = createMcpStack(new MinimalStub(), randomUUID());
-    // Server should be connected (has internal transport reference)
+    const stack = createMcpStack(new MinimalStub(), undefined, noopCallbacks);
     expect(stack.server).toBeDefined();
     expect(stack.transport).toBeDefined();
   });
@@ -32,9 +35,13 @@ describe('createMcpStack', () => {
 describe('handleMcpRequest', () => {
   let app: express.Application;
   let stack: ReturnType<typeof createMcpStack>;
+  let initializedSessionId: string | undefined;
 
   beforeAll(() => {
-    stack = createMcpStack(new MinimalStub(), randomUUID());
+    stack = createMcpStack(new MinimalStub(), undefined, {
+      onSessionInitialized: (sid) => { initializedSessionId = sid; },
+      onSessionClosed: () => {},
+    });
     app = express();
     app.use(express.json());
     app.post('/mcp', async (req, res) => {
@@ -42,7 +49,7 @@ describe('handleMcpRequest', () => {
     });
   });
 
-  it('responds to MCP initialize request', async () => {
+  it('responds to an MCP initialize request and assigns a session id', async () => {
     const res = await request(app)
       .post('/mcp')
       .set('Accept', 'application/json, text/event-stream')
@@ -58,5 +65,6 @@ describe('handleMcpRequest', () => {
       });
     // MCP returns 200 with SSE or JSON response
     expect(res.status).toBe(200);
+    expect(typeof initializedSessionId).toBe('string');
   });
 });
