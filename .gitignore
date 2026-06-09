@@ -10,6 +10,8 @@ dist/
 .vscode/
 coverage/
 
+DEPLOY.local.md
+
 # Internal / dev-only files
 IMPLEMENTATION_STATUS.md
 test-mcp.js
