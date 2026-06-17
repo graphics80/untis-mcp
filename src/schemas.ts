@@ -23,6 +23,7 @@ export const TOOLS = {
   GET_NEWS: 'getNews',
   GET_TEACHERS_FOR_CLASS: 'getTeachersForClass',
   GET_CLASSES_ON_DAY: 'getClassesOnDay',
+  GET_CLASSES_AT_LOCATION_ON_DAY: 'getClassesAtLocationOnDay',
   CLASS_ON_WEEKDAY: 'classOnWeekDay',
   GET_YEARLY_TIMETABLE_FOR_CLASS: 'getYearlyTimetableForClass',
   GET_LESSONS_FOR_SUBJECT: 'getLessonsForSubject',
@@ -116,6 +117,11 @@ export const toolSchemas = {
   }),
   [TOOLS.GET_CLASSES_ON_DAY]: z.object({
     date: dateSchema,
+    schoolYearId: schoolYearIdField,
+  }),
+  [TOOLS.GET_CLASSES_AT_LOCATION_ON_DAY]: z.object({
+    date: dateSchema,
+    location: z.string().min(1),
     schoolYearId: schoolYearIdField,
   }),
   [TOOLS.CLASS_ON_WEEKDAY]: z.object({

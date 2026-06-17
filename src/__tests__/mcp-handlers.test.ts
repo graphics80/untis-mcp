@@ -90,6 +90,12 @@ class StubUntisClient extends UntisClient {
       classes: [{ id: 10, name: '3A', longName: 'Klasse 3A', lessonCount: 4 }],
     };
   }
+  override async getClassesAtLocationOnDay(_date: Date, _location: string, _schoolYearId?: number) {
+    return {
+      schoolYear: { id: 1, name: '2025/26' },
+      classes: [{ id: 10, name: '3A', longName: 'Klasse 3A', lessonCount: 2, rooms: ['H200'] }],
+    };
+  }
 
   override async getYearlyTimetableForClass(classId: number) {
     return {
@@ -146,9 +152,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 25 tools', async () => {
+  it('returns all 26 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(25);
+    expect(tools).toHaveLength(26);
     const names = tools.map(t => t.name);
     expect(names).toContain('getTeachers');
     expect(names).toContain('getTimetable');
@@ -358,6 +364,22 @@ describe('getClassesOnDay', () => {
 
   it('rejects an invalid date', async () => {
     const result = await client.callTool({ name: 'getClassesOnDay', arguments: { date: 'nope' } });
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe('getClassesAtLocationOnDay', () => {
+  it('returns classes with a lesson at the given location', async () => {
+    const data = await callTool('getClassesAtLocationOnDay', { date: '2027-03-09', location: 'Horgen' });
+    expect(data.date).toBe('2027-03-09');
+    expect(data.location).toBe('Horgen');
+    expect(data.count).toBe(1);
+    expect(data.classes[0]).toMatchObject({ id: 10, name: '3A', lessonCount: 2, rooms: ['H200'] });
+    expect(data.schoolYear.name).toBe('2025/26');
+  });
+
+  it('rejects a missing location', async () => {
+    const result = await client.callTool({ name: 'getClassesAtLocationOnDay', arguments: { date: '2027-03-09' } });
     expect(result.isError).toBe(true);
   });
 });

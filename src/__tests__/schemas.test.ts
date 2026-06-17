@@ -71,6 +71,26 @@ describe('getAbsences', () => {
   });
 });
 
+describe('getClassesAtLocationOnDay', () => {
+  const schema = toolSchemas[TOOLS.GET_CLASSES_AT_LOCATION_ON_DAY];
+
+  it('accepts a date and location', () => {
+    expect(() => schema.parse({ date: validDate, location: 'Horgen' })).not.toThrow();
+  });
+
+  it('fails without a location', () => {
+    expect(() => schema.parse({ date: validDate })).toThrow();
+  });
+
+  it('fails with an empty location', () => {
+    expect(() => schema.parse({ date: validDate, location: '' })).toThrow();
+  });
+
+  it('fails without a date', () => {
+    expect(() => schema.parse({ location: 'Horgen' })).toThrow();
+  });
+});
+
 describe('getTeacherSubjects', () => {
   const schema = toolSchemas[TOOLS.GET_TEACHER_SUBJECTS];
 

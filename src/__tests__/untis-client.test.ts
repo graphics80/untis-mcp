@@ -348,6 +348,99 @@ describe('getClassesOnDay', () => {
   });
 });
 
+// ─── getClassesAtLocationOnDay ────────────────────────────────────────────────
+
+describe('getClassesAtLocationOnDay', () => {
+  const SCHOOL_YEARS = [
+    { id: 1, name: '2025/26', startDate: new Date('2025-09-01'), endDate: new Date('2026-06-30') },
+  ];
+  const CLASSES = [
+    { id: 10, name: '3A', longName: 'Klasse 3A' },
+    { id: 11, name: '1B', longName: 'Klasse 1B' },
+  ];
+  // H-rooms live in Horgen ("HO"), S-rooms in Stäfa ("ST"); ExtA has no building.
+  const ROOMS = [
+    { id: 100, name: 'H200', longName: 'Standardzimmer 200', building: 'HO' },
+    { id: 200, name: 'S1', longName: 'Saal 1', building: 'ST' },
+    { id: 300, name: 'ExtA', longName: 'externer Auftrag', building: '' },
+  ];
+  const lessonInRoom = (room: object, overrides: object = {}) =>
+    makeLesson({ ro: [room], ...overrides });
+
+  it('returns classes whose lessons are in a building matched by campus name', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+    mockInstance.getTimetableFor
+      .mockResolvedValueOnce([lessonInRoom({ id: 100, name: 'H200' }), lessonInRoom({ id: 200, name: 'S1' })]) // 3A: 1 in Horgen
+      .mockResolvedValueOnce([lessonInRoom({ id: 200, name: 'S1' })]);                                          // 1B: only Stäfa
+    const client = await makeClient();
+    const result = await client.getClassesAtLocationOnDay(new Date('2026-05-18'), 'Horgen');
+    expect(result.classes).toHaveLength(1);
+    expect(result.classes[0]).toMatchObject({ id: 10, name: '3A', lessonCount: 1, rooms: ['H200'] });
+    expect(result.schoolYear).toEqual({ id: 1, name: '2025/26' });
+  });
+
+  it('matches Stäfa (umlaut folded) against the "ST" building code', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([CLASSES[0]]);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+    mockInstance.getTimetableFor.mockResolvedValue([lessonInRoom({ id: 200, name: 'S1' })]);
+    const client = await makeClient();
+    const result = await client.getClassesAtLocationOnDay(new Date('2026-05-18'), 'Stäfa');
+    expect(result.classes).toHaveLength(1);
+    expect(result.classes[0]).toMatchObject({ name: '3A', lessonCount: 1, rooms: ['S1'] });
+  });
+
+  it('also accepts a raw building code', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([CLASSES[0]]);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+    mockInstance.getTimetableFor.mockResolvedValue([lessonInRoom({ id: 100, name: 'H200' })]);
+    const client = await makeClient();
+    const result = await client.getClassesAtLocationOnDay(new Date('2026-05-18'), 'HO');
+    expect(result.classes.map((c) => c.name)).toEqual(['3A']);
+  });
+
+  it('excludes cancelled lessons and classes with no lesson at the location', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+    mockInstance.getTimetableFor
+      .mockResolvedValueOnce([lessonInRoom({ id: 100, name: 'H200' }, { code: 'cancelled' })]) // 3A: only cancelled
+      .mockResolvedValueOnce([lessonInRoom({ id: 200, name: 'S1' })]);                          // 1B: only Stäfa
+    const client = await makeClient();
+    const result = await client.getClassesAtLocationOnDay(new Date('2026-05-18'), 'Horgen');
+    expect(result.classes).toHaveLength(0);
+  });
+
+  it('counts each matching lesson and dedupes rooms', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue([CLASSES[0]]);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+    mockInstance.getTimetableFor.mockResolvedValue([
+      lessonInRoom({ id: 100, name: 'H200' }),
+      lessonInRoom({ id: 100, name: 'H200' }),
+      lessonInRoom({ id: 200, name: 'S1' }),
+    ]);
+    const client = await makeClient();
+    const result = await client.getClassesAtLocationOnDay(new Date('2026-05-18'), 'Horgen');
+    expect(result.classes[0]).toMatchObject({ lessonCount: 2, rooms: ['H200'] });
+  });
+
+  it('tolerates a per-class timetable error (skips that class)', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+    mockInstance.getTimetableFor
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([lessonInRoom({ id: 100, name: 'H200' })]);
+    const client = await makeClient();
+    const result = await client.getClassesAtLocationOnDay(new Date('2026-05-18'), 'Horgen');
+    expect(result.classes.map((c) => c.id)).toEqual([11]);
+  });
+});
+
 // ─── logout ───────────────────────────────────────────────────────────────────
 
 describe('logout', () => {

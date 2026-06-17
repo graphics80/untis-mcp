@@ -238,6 +238,19 @@ const TOOL_LIST = [
           },
         },
         {
+          name: TOOLS.GET_CLASSES_AT_LOCATION_ON_DAY,
+          description: `Get all classes that have at least one lesson on a specific date at a given location/campus (building), each with its lesson count and the matching rooms. Location accepts a building code (e.g. "HO", "ST") or a campus name (e.g. "Horgen", "Stäfa"). ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', description: 'Date (YYYY-MM-DD)' },
+              location: { type: 'string', description: 'Location/campus or building: name (e.g. "Horgen", "Stäfa") or building code (e.g. "HO", "ST")' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional; overrides auto-detection from date)' },
+            },
+            required: ['date', 'location'],
+          },
+        },
+        {
           name: TOOLS.CLASS_ON_WEEKDAY,
           description: `Get all classes that have school on a given weekday, based on a single representative week. Weekday accepts a German name (Montag–Sonntag) or ISO number 1–7. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
@@ -652,6 +665,15 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
           const cdArgs = validatedArgs as any;
           const { schoolYear, classes } = await untisClient.getClassesOnDay(new Date(cdArgs.date), cdArgs.schoolYearId);
           result = { date: cdArgs.date, schoolYear, classes, count: classes.length };
+          break;
+        }
+
+        case TOOLS.GET_CLASSES_AT_LOCATION_ON_DAY: {
+          const clArgs = validatedArgs as any;
+          const { schoolYear, classes } = await untisClient.getClassesAtLocationOnDay(
+            new Date(clArgs.date), clArgs.location, clArgs.schoolYearId,
+          );
+          result = { date: clArgs.date, location: clArgs.location, schoolYear, classes, count: classes.length };
           break;
         }
 

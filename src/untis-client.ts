@@ -1,6 +1,15 @@
 import { WebUntis, WebUntisElementType } from 'webuntis';
 import { toISODate } from './weekday.js';
 
+// Lowercase, fold German umlauts, strip non-alphanumerics. Shared by email
+// derivation and location matching so both normalize tokens identically.
+// "Stäfa" → "staefa", "HO " → "ho".
+function normalizeToken(s: string): string {
+  return s.toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+    .replace(/[^a-z0-9]/g, '');
+}
+
 // longName format: "Lastname Firstname" → "firstname.lastname@domain"
 // Compound last names (e.g. "Reichner-Ris") use only the first part → "reichner"
 export function deriveTeacherEmail(longName: string, domain: string): string {
@@ -9,11 +18,7 @@ export function deriveTeacherEmail(longName: string, domain: string): string {
   const firstName = parts[parts.length - 1];
   const rawLastName = parts.slice(0, -1).join('');
   const lastName = rawLastName.split('-')[0];
-  const norm = (s: string) =>
-    s.toLowerCase()
-      .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
-      .replace(/[^a-z0-9]/g, '');
-  return `${norm(firstName)}.${norm(lastName)}@${domain}`;
+  return `${normalizeToken(firstName)}.${normalizeToken(lastName)}@${domain}`;
 }
 
 export class UntisClient {
@@ -594,6 +599,31 @@ export class UntisClient {
     };
   }
 
+  // Resolve the {id, name} of the school year for a given day: by explicit ID
+  // when provided, otherwise the year whose range contains `date`.
+  private async resolveYearForDate(date: Date, schoolYearId?: number): Promise<{ id: number; name: string } | null> {
+    if (schoolYearId !== undefined) {
+      const year = await this.findSchoolYear(schoolYearId);
+      if (!year) throw new Error(`School year ${schoolYearId} not found`);
+      return { id: year.id, name: year.name };
+    }
+    return this.resolveSchoolYear(date);
+  }
+
+  // Does a room belong to the queried location? `room` fields and `nq` are both
+  // already normalized via normalizeToken. The building code is the primary signal
+  // ("HO" = Horgen, "ST" = Stäfa); substring matching in either direction lets a
+  // full name ("Horgen") match its code ("HO") and vice versa. Room name / longName
+  // are a fallback for rooms with no building set.
+  private static roomMatchesLocation(
+    room: { building: string; name: string; longName: string },
+    nq: string,
+  ): boolean {
+    const b = room.building;
+    if (b && (nq.includes(b) || b.includes(nq))) return true;
+    return nq.length > 0 && (room.name.includes(nq) || room.longName.includes(nq));
+  }
+
   // All classes of the school year matching `date` that have at least one
   // non-cancelled lesson on that exact day, each with its lesson count.
   // Per-class timetable fetches are throttled via batchMap (limit 5).
@@ -604,14 +634,7 @@ export class UntisClient {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        let schoolYear: { id: number; name: string } | null;
-        if (schoolYearId !== undefined) {
-          const year = await this.findSchoolYear(schoolYearId);
-          if (!year) throw new Error(`School year ${schoolYearId} not found`);
-          schoolYear = { id: year.id, name: year.name };
-        } else {
-          schoolYear = await this.resolveSchoolYear(date);
-        }
+        const schoolYear = await this.resolveYearForDate(date, schoolYearId);
         const classes =
           (await client.getClasses(true, schoolYear?.id as number)) || [];
 
@@ -634,6 +657,73 @@ export class UntisClient {
         };
       } catch (error) {
         throw new Error(`Failed to fetch classes on day: ${error}`);
+      }
+    });
+  }
+
+  // All classes that have at least one non-cancelled lesson on `date` taking place
+  // at the given location (building). `location` accepts a building code ("HO"),
+  // a campus name ("Horgen", "Stäfa"), or any substring thereof. Each returned
+  // class lists the matching rooms and how many of its lessons are at the location.
+  async getClassesAtLocationOnDay(date: Date, location: string, schoolYearId?: number): Promise<{
+    schoolYear: { id: number; name: string } | null;
+    classes: Array<{ id: number; name: string; longName: string; lessonCount: number; rooms: string[] }>;
+  }> {
+    return this.withReconnect(async () => {
+      const client = this.ensureClient();
+      try {
+        const nq = normalizeToken(location);
+        const schoolYear = await this.resolveYearForDate(date, schoolYearId);
+
+        const [classes, rooms] = await Promise.all([
+          client.getClasses(true, schoolYear?.id as number).then(r => r || []),
+          this.getRooms(),
+        ]);
+
+        // Room id → pre-normalized building/name/longName, so a lesson's room (which
+        // carries only id/name) resolves to its building for matching without
+        // re-normalizing the same fixed room set on every class/lesson.
+        const normRoom = (r: any) => ({
+          building: normalizeToken(r.building || ''),
+          name: normalizeToken(r.name || ''),
+          longName: normalizeToken(r.longName || r.longname || ''),
+        });
+        const roomById = new Map<number, { building: string; name: string; longName: string }>(
+          rooms.map((r: any) => [r.id, normRoom(r)]),
+        );
+
+        const withLessons = await this.batchMap(classes, async (klasse: any) => {
+          try {
+            const timetable =
+              (await client.getTimetableFor(date, klasse.id, WebUntisElementType.CLASS)) || [];
+            let lessonCount = 0;
+            const matchedRooms = new Set<string>();
+            for (const lesson of timetable) {
+              if (lesson.code === 'cancelled') continue;
+              let lessonMatches = false;
+              for (const lr of (lesson.ro as any[]) || []) {
+                const room = roomById.get(lr.id) ?? normRoom(lr);
+                if (UntisClient.roomMatchesLocation(room, nq)) {
+                  lessonMatches = true;
+                  matchedRooms.add(lr.name);
+                }
+              }
+              if (lessonMatches) lessonCount++;
+            }
+            return lessonCount > 0
+              ? { id: klasse.id, name: klasse.name, longName: klasse.longName || '', lessonCount, rooms: [...matchedRooms].sort() }
+              : null;
+          } catch {
+            return null;
+          }
+        });
+
+        return {
+          schoolYear,
+          classes: withLessons.sort((a, b) => a.name.localeCompare(b.name)),
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch classes at location on day: ${error}`);
       }
     });
   }
