@@ -290,6 +290,30 @@ const TOOL_LIST = [
             required: ['subjectName'],
           },
         },
+        {
+          name: TOOLS.GET_SCHOOL_QUARTERS,
+          description: `Get the school year's four quarters (Quartale) with their start/end dates, the modules taught in each, and lesson counts. Quarters are derived from when teaching modules change: a quarter ends as soon as its modules stop being taught and the next set begins. Detection uses a first-year IA "a"/"b" class pair as the reference. Quarters 1–2 are semester 1, quarters 3–4 are semester 2. ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year)' },
+              referenceClass: { type: 'string', description: 'Reference IA cohort to derive quarters from, e.g. "IA25" (optional; defaults to the first-year IA cohort). Both its "a" and "b" classes are used.' },
+            },
+            required: [],
+          },
+        },
+        {
+          name: TOOLS.GET_SEMESTERS,
+          description: `Get the school year's two semesters with their start/end dates and the semester-change date (start of quarter 3). Semester 1 covers quarters 1–2, semester 2 covers quarters 3–4. Derived the same way as getSchoolQuarters. ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year)' },
+              referenceClass: { type: 'string', description: 'Reference IA cohort to derive semesters from, e.g. "IA25" (optional; defaults to the first-year IA cohort).' },
+            },
+            required: [],
+          },
+        },
 ];
 
 export function registerHandlers(server: Server, untisClient: UntisClient, emailDomain?: string): void {
@@ -704,6 +728,18 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
           const lfsStart = lfsArgs.startDate ? new Date(lfsArgs.startDate) : undefined;
           const lfsEnd = lfsArgs.endDate ? new Date(lfsArgs.endDate) : undefined;
           result = await untisClient.getLessonsForSubject(lfsArgs.subjectName, lfsArgs.classId, lfsArgs.schoolYearId, lfsStart, lfsEnd);
+          break;
+        }
+
+        case TOOLS.GET_SCHOOL_QUARTERS: {
+          const sqArgs = validatedArgs as any;
+          result = await untisClient.getSchoolQuarters(sqArgs.schoolYearId, sqArgs.referenceClass);
+          break;
+        }
+
+        case TOOLS.GET_SEMESTERS: {
+          const semArgs = validatedArgs as any;
+          result = await untisClient.getSemesters(semArgs.schoolYearId, semArgs.referenceClass);
           break;
         }
 

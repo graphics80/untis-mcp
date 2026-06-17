@@ -728,6 +728,174 @@ export class UntisClient {
     });
   }
 
+  // A "module" subject carries a digit in its name (BZZ module codes like "165",
+  // "M323"); recurring non-module periods (Klassenstunde "Inf", "Spo_bili") do not.
+  // Filtering to modules makes the quarter signal clean.
+  private static isModuleSubject(name: string): boolean {
+    return /\d/.test(name);
+  }
+
+  // Split an ordered date→modules map into quarter segments: a new quarter begins
+  // at the first date whose modules are *disjoint* from the modules seen so far in
+  // the running quarter (i.e. all previous modules have stopped being taught).
+  private segmentByModuleChange(
+    dateModules: Map<number, Set<string>>,
+  ): Array<{ start: number; end: number; modules: Set<string> }> {
+    const segments: Array<{ start: number; end: number; modules: Set<string> }> = [];
+    let current: { start: number; end: number; modules: Set<string> } | null = null;
+    for (const date of [...dateModules.keys()].sort((a, b) => a - b)) {
+      const mods = dateModules.get(date)!;
+      if (mods.size === 0) continue;
+      if (!current) {
+        current = { start: date, end: date, modules: new Set(mods) };
+      } else if ([...mods].some(m => current!.modules.has(m))) {
+        current.end = date;
+        for (const m of mods) current.modules.add(m);
+      } else {
+        segments.push(current);
+        current = { start: date, end: date, modules: new Set(mods) };
+      }
+    }
+    if (current) segments.push(current);
+    return segments;
+  }
+
+  // Reference classes for quarter detection: IA cohorts with an "a" and "b" parallel
+  // class (e.g. "IA24 a"/"IA24 b"), grouped by cohort key ("IA24"). An optional
+  // filter narrows to a single cohort. `preferredKey` (the first-year cohort) is
+  // returned first so it is tried before any fallback.
+  private selectQuarterReferenceCohorts(
+    classes: any[],
+    referenceClass?: string,
+    preferredKey?: string,
+  ): Array<{ key: string; classes: Array<{ id: number; name: string }> }> {
+    const byKey = new Map<string, Array<{ id: number; name: string }>>();
+    for (const c of classes) {
+      const m = /^(IA\d{2})\s*([ab])$/i.exec(c.name);
+      if (!m) continue;
+      const key = m[1].toUpperCase();
+      (byKey.get(key) ?? byKey.set(key, []).get(key)!).push({ id: c.id, name: c.name });
+    }
+    const wanted = referenceClass ? normalizeToken(referenceClass) : null;
+    return [...byKey.entries()]
+      .filter(([key]) => !wanted || normalizeToken(key).startsWith(wanted) || wanted.startsWith(normalizeToken(key)))
+      .sort(([a], [b]) =>
+        (a === preferredKey ? -1 : b === preferredKey ? 1 : 0) || a.localeCompare(b))
+      .map(([key, cohort]) => ({ key, classes: cohort }));
+  }
+
+  // Detect the school's quarters for a year from when teaching modules change.
+  // Quarters are inferred from a reference IA "a"/"b" cohort whose modules are
+  // taught in sequential blocks (a module ending marks a quarter boundary). The
+  // first-year IA cohort (its number matches the school year's start year, e.g.
+  // "IA25" in 2025/26) is preferred; if it doesn't yield four quarters the next
+  // cohort is tried, falling back to the closest. semester is 1 for quarters 1–2
+  // and 2 for quarters 3–4.
+  async getSchoolQuarters(schoolYearId?: number, referenceClass?: string): Promise<{
+    schoolYear: { id: number; name: string; startDate: string; endDate: string };
+    referenceClasses: string[];
+    quarterCount: number;
+    quarters: Array<{ quarter: number; semester: number; startDate: string; endDate: string; modules: Array<{ code: string; title: string }>; lessonCount: number }>;
+  }> {
+    return this.withReconnect(async () => {
+      const client = this.ensureClient();
+      try {
+        const year = await this.findSchoolYear(schoolYearId);
+        if (!year) throw new Error(schoolYearId ? `School year ${schoolYearId} not found` : 'No school year found for today');
+
+        const [classes, subjects] = await Promise.all([
+          client.getClasses(true, year.id).then((r: any) => r || []),
+          this.getSubjects().catch(() => []),
+        ]);
+        const subjectTitle = new Map<string, string>(
+          subjects.map((s: any) => [s.name, s.longName || '']),
+        );
+
+        // First-year cohort key: "IA" + last two digits of the school year's start year.
+        const firstYearKey = `IA${String(year.startDate.getFullYear() % 100).padStart(2, '0')}`;
+        const cohorts = this.selectQuarterReferenceCohorts(classes, referenceClass, firstYearKey);
+        if (cohorts.length === 0) {
+          throw new Error(`No IA a/b reference classes found${referenceClass ? ` matching "${referenceClass}"` : ''} in school year ${year.name}`);
+        }
+
+        type Candidate = {
+          classes: Array<{ id: number; name: string }>;
+          segments: Array<{ start: number; end: number; modules: Set<string> }>;
+          moduleLessons: Array<{ date: number }>;
+        };
+        let chosen: Candidate | null = null;
+        let best: Candidate | null = null;
+
+        for (const cohort of cohorts) {
+          const dateModules = new Map<number, Set<string>>();
+          const moduleLessons: Array<{ date: number }> = [];
+          for (const c of cohort.classes) {
+            const tt: any[] = (await client.getTimetableForRange(year.startDate, year.endDate, c.id, WebUntisElementType.CLASS).catch(() => null)) ?? [];
+            for (const l of tt) {
+              const subject = l.su?.[0]?.name;
+              if (l.code === 'cancelled' || !subject || !UntisClient.isModuleSubject(subject)) continue;
+              (dateModules.get(l.date) ?? dateModules.set(l.date, new Set()).get(l.date)!).add(subject);
+              moduleLessons.push({ date: l.date });
+            }
+          }
+          const segments = this.segmentByModuleChange(dateModules);
+          const candidate: Candidate = { classes: cohort.classes, segments, moduleLessons };
+          if (segments.length === 4) { chosen = candidate; break; }
+          if (!best || Math.abs(segments.length - 4) < Math.abs(best.segments.length - 4)) best = candidate;
+        }
+
+        const pick = chosen ?? best!;
+        const quarters = pick.segments.map((seg, i) => ({
+          quarter: i + 1,
+          semester: i < 2 ? 1 : 2,
+          startDate: UntisClient.untisDateToISO(seg.start),
+          endDate: UntisClient.untisDateToISO(seg.end),
+          modules: [...seg.modules].sort().map(code => ({ code, title: subjectTitle.get(code) || '' })),
+          lessonCount: pick.moduleLessons.filter(l => l.date >= seg.start && l.date <= seg.end).length,
+        }));
+
+        return {
+          schoolYear: { id: year.id, name: year.name, startDate: toISODate(year.startDate), endDate: toISODate(year.endDate) },
+          referenceClasses: pick.classes.map(c => c.name),
+          quarterCount: quarters.length,
+          quarters,
+        };
+      } catch (error) {
+        throw new Error(`Failed to compute school quarters: ${error}`);
+      }
+    });
+  }
+
+  // The two semesters, derived from the quarters: semester 1 = quarters 1–2,
+  // semester 2 = quarters 3–4. The semester change is the start of quarter 3.
+  async getSemesters(schoolYearId?: number, referenceClass?: string): Promise<{
+    schoolYear: { id: number; name: string; startDate: string; endDate: string };
+    referenceClasses: string[];
+    semesterChangeDate: string | null;
+    semesters: Array<{ semester: number; startDate: string; endDate: string; quarters: number[]; modules: Array<{ code: string; title: string }> }>;
+  }> {
+    const q = await this.getSchoolQuarters(schoolYearId, referenceClass);
+    const semesters = [1, 2].map(sem => {
+      const qs = q.quarters.filter(x => x.semester === sem);
+      const modules = new Map<string, string>();
+      for (const x of qs) for (const m of x.modules) modules.set(m.code, m.title);
+      return qs.length === 0 ? null : {
+        semester: sem,
+        startDate: qs[0].startDate,
+        endDate: qs[qs.length - 1].endDate,
+        quarters: qs.map(x => x.quarter),
+        modules: [...modules.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([code, title]) => ({ code, title })),
+      };
+    }).filter((s): s is NonNullable<typeof s> => s !== null);
+
+    return {
+      schoolYear: q.schoolYear,
+      referenceClasses: q.referenceClasses,
+      semesterChangeDate: semesters.find(s => s.semester === 2)?.startDate ?? null,
+      semesters,
+    };
+  }
+
   async getYearlyTimetableForClass(classId: number, schoolYearId?: number): Promise<{
     schoolYear: { name: string; startDate: string; endDate: string };
     classId: number;

@@ -7,6 +7,7 @@ const mockInstance = vi.hoisted(() => ({
   getTeachers: vi.fn(),
   getClasses: vi.fn(),
   getRooms: vi.fn(),
+  getSubjects: vi.fn(),
   getTimetableForRange: vi.fn(),
   getTimetableForToday: vi.fn(),
   getTimetableFor: vi.fn(),
@@ -438,6 +439,120 @@ describe('getClassesAtLocationOnDay', () => {
     const client = await makeClient();
     const result = await client.getClassesAtLocationOnDay(new Date('2026-05-18'), 'Horgen');
     expect(result.classes.map((c) => c.id)).toEqual([11]);
+  });
+});
+
+// ─── getSchoolQuarters / getSemesters ─────────────────────────────────────────
+
+describe('getSchoolQuarters', () => {
+  const SCHOOL_YEARS = [
+    { id: 15, name: '2025/26', startDate: new Date('2025-08-01'), endDate: new Date('2026-07-31') },
+  ];
+  // IA25 = first-year cohort (matches the 2025 school-year start); IA24 is older.
+  const CLASSES = [
+    { id: 1, name: 'IA25 a', longName: '' },
+    { id: 2, name: 'IA25 b', longName: '' },
+    { id: 3, name: 'IA24 a', longName: '' },
+    { id: 4, name: 'IA24 b', longName: '' },
+    { id: 5, name: '3A', longName: '' },
+  ];
+  const SUBJECTS = [
+    { name: '101', longName: 'Module 101' }, { name: '102', longName: 'Module 102' },
+    { name: '201', longName: 'Module 201' }, { name: '202', longName: 'Module 202' },
+    { name: '301', longName: 'Module 301' }, { name: '302', longName: 'Module 302' },
+    { name: '401', longName: 'Module 401' }, { name: '402', longName: 'Module 402' },
+  ];
+  const mod = (date: number, name: string) => ({ date, startTime: 800, endTime: 850, su: [{ name }], code: undefined });
+  // Four disjoint module blocks → four quarters. Each day carries both of its
+  // quarter's modules so consecutive days overlap (same quarter); blocks don't.
+  const q = (date: number, a: string, b: string) => [mod(date, a), mod(date, b)];
+  const LESSONS = [
+    ...q(20250901, '101', '102'), ...q(20250908, '101', '102'),
+    ...q(20251101, '201', '202'), ...q(20251108, '201', '202'),
+    ...q(20260201, '301', '302'), ...q(20260208, '301', '302'),
+    ...q(20260501, '401', '402'), ...q(20260508, '401', '402'),
+    mod(20250901, 'Sport'), // non-module (no digit) → filtered out
+  ];
+
+  beforeEach(() => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getSubjects.mockResolvedValue(SUBJECTS);
+    mockInstance.getTimetableForRange.mockResolvedValue(LESSONS);
+  });
+
+  it('detects four quarters from module changes using the first-year IA cohort', async () => {
+    const client = await makeClient();
+    const result = await client.getSchoolQuarters(15);
+    expect(result.referenceClasses).toEqual(['IA25 a', 'IA25 b']);
+    expect(result.quarterCount).toBe(4);
+    expect(result.quarters.map(q => [q.quarter, q.semester, q.startDate, q.endDate])).toEqual([
+      [1, 1, '2025-09-01', '2025-09-08'],
+      [2, 1, '2025-11-01', '2025-11-08'],
+      [3, 2, '2026-02-01', '2026-02-08'],
+      [4, 2, '2026-05-01', '2026-05-08'],
+    ]);
+  });
+
+  it('reports each quarter\'s modules (with titles) and lesson count, excluding non-modules', async () => {
+    const client = await makeClient();
+    const result = await client.getSchoolQuarters(15);
+    expect(result.quarters[0].modules).toEqual([
+      { code: '101', title: 'Module 101' },
+      { code: '102', title: 'Module 102' },
+    ]);
+    expect(result.quarters[0].lessonCount).toBe(8); // 2 modules × 2 days × 2 ref classes; Sport excluded
+  });
+
+  it('honors an explicit referenceClass override', async () => {
+    const client = await makeClient();
+    const result = await client.getSchoolQuarters(15, 'IA24');
+    expect(result.referenceClasses).toEqual(['IA24 a', 'IA24 b']);
+  });
+
+  it('throws when no IA a/b reference classes exist', async () => {
+    mockInstance.getClasses.mockResolvedValue([{ id: 5, name: '3A', longName: '' }]);
+    const client = await makeClient();
+    await expect(client.getSchoolQuarters(15)).rejects.toThrow('No IA a/b reference classes');
+  });
+});
+
+describe('getSemesters', () => {
+  const SCHOOL_YEARS = [
+    { id: 15, name: '2025/26', startDate: new Date('2025-08-01'), endDate: new Date('2026-07-31') },
+  ];
+  const CLASSES = [
+    { id: 1, name: 'IA25 a', longName: '' },
+    { id: 2, name: 'IA25 b', longName: '' },
+  ];
+  const mod = (date: number, name: string) => ({ date, startTime: 800, endTime: 850, su: [{ name }], code: undefined });
+  const q = (date: number, a: string, b: string) => [mod(date, a), mod(date, b)];
+  const LESSONS = [
+    ...q(20250901, '101', '102'), ...q(20250908, '101', '102'),
+    ...q(20251101, '201', '202'), ...q(20251108, '201', '202'),
+    ...q(20260201, '301', '302'), ...q(20260208, '301', '302'),
+    ...q(20260501, '401', '402'), ...q(20260508, '401', '402'),
+  ];
+
+  beforeEach(() => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getClasses.mockResolvedValue(CLASSES);
+    mockInstance.getSubjects.mockResolvedValue([]);
+    mockInstance.getTimetableForRange.mockResolvedValue(LESSONS);
+  });
+
+  it('groups quarters into two semesters with the change at the start of Q3', async () => {
+    const client = await makeClient();
+    const result = await client.getSemesters(15);
+    expect(result.semesterChangeDate).toBe('2026-02-01');
+    expect(result.semesters).toEqual([
+      { semester: 1, startDate: '2025-09-01', endDate: '2025-11-08', quarters: [1, 2], modules: [
+        { code: '101', title: '' }, { code: '102', title: '' }, { code: '201', title: '' }, { code: '202', title: '' },
+      ] },
+      { semester: 2, startDate: '2026-02-01', endDate: '2026-05-08', quarters: [3, 4], modules: [
+        { code: '301', title: '' }, { code: '302', title: '' }, { code: '401', title: '' }, { code: '402', title: '' },
+      ] },
+    ]);
   });
 });
 

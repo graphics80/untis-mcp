@@ -112,6 +112,31 @@ class StubUntisClient extends UntisClient {
     };
   }
 
+  override async getSchoolQuarters(_schoolYearId?: number, _referenceClass?: string) {
+    return {
+      schoolYear: { id: 15, name: '2025/26', startDate: '2025-08-01', endDate: '2026-07-31' },
+      referenceClasses: ['IA25 a', 'IA25 b'],
+      quarterCount: 4,
+      quarters: [
+        { quarter: 1, semester: 1, startDate: '2025-09-01', endDate: '2025-11-07', modules: [{ code: '101', title: 'Module 101' }], lessonCount: 20 },
+        { quarter: 2, semester: 1, startDate: '2025-11-14', endDate: '2026-01-23', modules: [{ code: '201', title: 'Module 201' }], lessonCount: 18 },
+        { quarter: 3, semester: 2, startDate: '2026-01-30', endDate: '2026-04-17', modules: [{ code: '301', title: 'Module 301' }], lessonCount: 19 },
+        { quarter: 4, semester: 2, startDate: '2026-05-08', endDate: '2026-07-10', modules: [{ code: '401', title: 'Module 401' }], lessonCount: 17 },
+      ],
+    };
+  }
+  override async getSemesters(_schoolYearId?: number, _referenceClass?: string) {
+    return {
+      schoolYear: { id: 15, name: '2025/26', startDate: '2025-08-01', endDate: '2026-07-31' },
+      referenceClasses: ['IA25 a', 'IA25 b'],
+      semesterChangeDate: '2026-01-30',
+      semesters: [
+        { semester: 1, startDate: '2025-09-01', endDate: '2026-01-23', quarters: [1, 2], modules: [{ code: '101', title: 'Module 101' }] },
+        { semester: 2, startDate: '2026-01-30', endDate: '2026-07-10', quarters: [3, 4], modules: [{ code: '301', title: 'Module 301' }] },
+      ],
+    };
+  }
+
   override async getLessonsForSubject(subjectName: string) {
     return {
       subject: subjectName,
@@ -152,9 +177,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 26 tools', async () => {
+  it('returns all 28 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(26);
+    expect(tools).toHaveLength(28);
     const names = tools.map(t => t.name);
     expect(names).toContain('getTeachers');
     expect(names).toContain('getTimetable');
@@ -469,6 +494,33 @@ describe('getLessonsForSubject', () => {
   it('rejects empty subjectName', async () => {
     const result = await client.callTool({ name: 'getLessonsForSubject', arguments: { subjectName: '' } });
     expect(result.isError).toBe(true);
+  });
+});
+
+// ─── getSchoolQuarters / getSemesters ─────────────────────────────────────────
+
+describe('getSchoolQuarters', () => {
+  it('returns four quarters with reference classes and semester mapping', async () => {
+    const data = await callTool('getSchoolQuarters', {});
+    expect(data.referenceClasses).toEqual(['IA25 a', 'IA25 b']);
+    expect(data.quarterCount).toBe(4);
+    expect(data.quarters[0]).toMatchObject({ quarter: 1, semester: 1, startDate: '2025-09-01' });
+    expect(data.quarters[3]).toMatchObject({ quarter: 4, semester: 2 });
+  });
+
+  it('accepts an optional referenceClass and schoolYearId', async () => {
+    const data = await callTool('getSchoolQuarters', { schoolYearId: 15, referenceClass: 'IA25' });
+    expect(data.quarterCount).toBe(4);
+  });
+});
+
+describe('getSemesters', () => {
+  it('returns two semesters and the semester-change date', async () => {
+    const data = await callTool('getSemesters', {});
+    expect(data.semesterChangeDate).toBe('2026-01-30');
+    expect(data.semesters).toHaveLength(2);
+    expect(data.semesters[0]).toMatchObject({ semester: 1, quarters: [1, 2] });
+    expect(data.semesters[1]).toMatchObject({ semester: 2, quarters: [3, 4], startDate: '2026-01-30' });
   });
 });
 
