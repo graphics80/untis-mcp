@@ -31,7 +31,6 @@ describe('checkSecret', () => {
 
 // ─── HTTP routes (supertest) ──────────────────────────────────────────────────
 
-const TEST_BASE_URL = 'http://localhost:9999';
 const TEST_SECRET = 'test-secret-1234567890';
 
 function makeTestConfig(): AppConfig {
@@ -42,7 +41,6 @@ function makeTestConfig(): AppConfig {
     untisBaseUrl: process.env.WEBUNTIS_BASE_URL || 'bzz.webuntis.com',
     mcpSecret: TEST_SECRET,
     timezone: process.env.SCHOOL_TIMEZONE || 'Europe/Zurich',
-    baseUrl: TEST_BASE_URL,
   };
 }
 

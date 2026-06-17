@@ -45,7 +45,6 @@ export interface AppConfig {
   /** The shared URL secret — only requests to /untis/<secret> are served. */
   mcpSecret: string;
   timezone?: string;
-  baseUrl?: string;
   emailDomain?: string;
 }
 
@@ -61,7 +60,6 @@ export function createApp(config: AppConfig): {
     untisBaseUrl,
     mcpSecret,
     timezone = 'Europe/Zurich',
-    baseUrl = 'https://mcp.it.bzz.ch',
     emailDomain,
   } = config;
 
@@ -70,13 +68,19 @@ export function createApp(config: AppConfig): {
   // Keyed by the transport-assigned Mcp-Session-Id (one stack per concurrent client).
   const mcpSessions = new Map<string, McpSession>();
 
-  const sweepInterval = setInterval(/* v8 ignore next 8 */() => {
+  // Single teardown path for a session: log out the WebUntis client and drop the entry.
+  const disposeSession = (sessionId: string): void => {
+    const session = mcpSessions.get(sessionId);
+    if (!session) return;
+    session.client.logout().catch(() => {});
+    mcpSessions.delete(sessionId);
+    process.stderr.write(`MCP session closed: ${sessionId}\n`);
+  };
+
+  const sweepInterval = setInterval(/* v8 ignore next 4 */() => {
     const cutoff = Date.now() - SESSION_TTL_MS;
-    for (const [k, s] of mcpSessions) {
-      if (s.lastAccess < cutoff) {
-        s.client.logout().catch(() => {});
-        mcpSessions.delete(k);
-      }
+    for (const [sid, s] of mcpSessions) {
+      if (s.lastAccess < cutoff) disposeSession(sid);
     }
   }, 10 * 60 * 1000);
 
@@ -124,20 +128,12 @@ export function createApp(config: AppConfig): {
       const client = new UntisClient(timezone);
       await client.initialize(school, untisUsername, untisPassword, untisBaseUrl);
 
-      let stack: McpStack;
-      stack = createMcpStack(client, emailDomain, {
+      const stack = createMcpStack(client, emailDomain, {
         onSessionInitialized: (sid) => {
           mcpSessions.set(sid, { stack, client, lastAccess: Date.now() });
           process.stderr.write(`MCP session created: ${sid}\n`);
         },
-        onSessionClosed: (sid) => {
-          const s = mcpSessions.get(sid);
-          if (s) {
-            s.client.logout().catch(() => {});
-            mcpSessions.delete(sid);
-            process.stderr.write(`MCP session closed: ${sid}\n`);
-          }
-        },
+        onSessionClosed: disposeSession,
       });
 
       await handleMcpRequest(stack, req, res);
@@ -165,7 +161,7 @@ async function main(): Promise<void> {
   const mcpSecret = envSecret || randomUUID();
 
   const { app, mcpSessions, sweepInterval } = createApp({
-    school, untisUsername, untisPassword, untisBaseUrl, mcpSecret, timezone, baseUrl, emailDomain,
+    school, untisUsername, untisPassword, untisBaseUrl, mcpSecret, timezone, emailDomain,
   });
 
   const httpServer = app.listen(port, '0.0.0.0', () => {

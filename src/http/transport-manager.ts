@@ -32,9 +32,10 @@ export function createMcpStack(
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
     onsessioninitialized: callbacks.onSessionInitialized,
-    onsessionclosed: callbacks.onSessionClosed,
   });
 
+  // onclose covers every close path (incl. the DELETE that onsessionclosed would
+  // signal), so a single hook here is enough — no need for onsessionclosed too.
   transport.onclose = () => {
     if (transport.sessionId) callbacks.onSessionClosed(transport.sessionId);
   };
