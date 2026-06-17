@@ -146,6 +146,20 @@ class StubUntisClient extends UntisClient {
       byClass: [{ class: '3A', lessonCount: 1, lessons: [{ date: '2025-09-01', teachers: ['MUS'], rooms: ['A101'], startTime: '2025-09-01T08:00:00+02:00', endTime: '2025-09-01T08:45:00+02:00', cancelled: false }] }],
     };
   }
+
+  override async getTeacherSchedule(teacherQuery: string | number) {
+    return {
+      teacher: { id: 1, name: typeof teacherQuery === 'string' ? teacherQuery : 'MUS', longName: 'Mustermann Max' },
+      schoolYear: { id: 15, name: '2025/26', startDate: '2025-08-01', endDate: '2026-07-31' },
+      quartersDetected: true,
+      quarters: [
+        { quarter: 1, semester: 1, startDate: '2025-09-01', endDate: '2025-11-07' },
+      ],
+      schedule: [
+        { quarter: 1, semester: 1, subject: 'M', subjectTitle: 'Mathematik', class: '3A', weekday: 'Dienstag', startTime: '08:00', endTime: '08:45', halfDay: 'Vormittag' as const, dateRange: { startDate: '2025-09-02', endDate: '2025-11-04' }, lessonDays: 10, lessonCount: 10, cancelledCount: 0, rooms: ['A01'], dates: ['2025-09-02'] },
+      ],
+    };
+  }
 }
 
 // ─── Client/Server wiring ──────────────────────────────────────────────────────
@@ -177,13 +191,14 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 28 tools', async () => {
+  it('returns all 29 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(29);
     const names = tools.map(t => t.name);
     expect(names).toContain('getTeachers');
     expect(names).toContain('getTimetable');
     expect(names).toContain('findSubstituteTeachers');
+    expect(names).toContain('getTeacherSchedule');
   });
 });
 
@@ -521,6 +536,30 @@ describe('getSemesters', () => {
     expect(data.semesters).toHaveLength(2);
     expect(data.semesters[0]).toMatchObject({ semester: 1, quarters: [1, 2] });
     expect(data.semesters[1]).toMatchObject({ semester: 2, quarters: [3, 4], startDate: '2026-01-30' });
+  });
+});
+
+// ─── getTeacherSchedule ───────────────────────────────────────────────────────
+
+describe('getTeacherSchedule', () => {
+  it('returns the teacher schedule blocks with quarter, weekday and half-day', async () => {
+    const data = await callTool('getTeacherSchedule', { teacher: 'DivG' });
+    expect(data.teacher.name).toBe('DivG');
+    expect(data.quartersDetected).toBe(true);
+    expect(data.schedule).toHaveLength(1);
+    expect(data.schedule[0]).toMatchObject({
+      quarter: 1, subject: 'M', class: '3A', weekday: 'Dienstag', halfDay: 'Vormittag',
+    });
+  });
+
+  it('accepts teacherId as an alternative to teacher', async () => {
+    const data = await callTool('getTeacherSchedule', { teacherId: 1, schoolYearId: 15 });
+    expect(data.teacher.id).toBe(1);
+  });
+
+  it('rejects calls without teacher or teacherId', async () => {
+    const result = await client.callTool({ name: 'getTeacherSchedule', arguments: {} });
+    expect(result.isError).toBe(true);
   });
 });
 

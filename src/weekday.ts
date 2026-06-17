@@ -55,3 +55,15 @@ export function dateForWeekdayInWeek(isoWeekday: number, reference: Date): Date 
 export function toISODate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+
+// Format a WebUntis Hmm time integer (e.g. 800, 1015) as "HH:MM".
+export function formatHm(hm: number): string {
+  return `${String(Math.floor(hm / 100)).padStart(2, '0')}:${String(hm % 100).padStart(2, '0')}`;
+}
+
+// ISO weekday (1 = Montag … 7 = Sonntag) for a YYYY-MM-DD date string.
+// Anchored at local noon so DST/UTC edge cases never shift the day.
+export function isoWeekdayFromISODate(iso: string): number {
+  const js = new Date(`${iso}T12:00:00`).getDay();
+  return js === 0 ? 7 : js;
+}

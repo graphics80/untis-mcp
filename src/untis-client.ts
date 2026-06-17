@@ -1,5 +1,11 @@
 import { WebUntis, WebUntisElementType } from 'webuntis';
-import { toISODate } from './weekday.js';
+import { toISODate, isoWeekdayFromISODate, formatHm, WEEKDAY_NAMES_ISO } from './weekday.js';
+
+// Half-day classification thresholds (WebUntis Hmm). A slot starting before noon
+// is a morning slot; if it also runs to/past 13:00 it spans lunch → full day.
+// These are the standard BZZ midday break bounds.
+const MORNING_END_HM = 1200;     // 12:00
+const AFTERNOON_START_HM = 1300; // 13:00
 
 // Lowercase, fold German umlauts, strip non-alphanumerics. Shared by email
 // derivation and location matching so both normalize tokens identically.
@@ -108,6 +114,18 @@ export class UntisClient {
   private static untisDateToISO(date: number): string {
     const ds = String(date);
     return `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6, 8)}`;
+  }
+
+  // Get the value for `key`, initializing it with `make()` on first access.
+  private static getOrInit<K, V>(map: Map<K, V>, key: K, make: () => V): V {
+    let v = map.get(key);
+    if (v === undefined) map.set(key, v = make());
+    return v;
+  }
+
+  // subject name → longName ("" when missing), for enriching module/subject codes.
+  private buildSubjectTitleMap(subjects: any[]): Map<string, string> {
+    return new Map<string, string>(subjects.map((s: any) => [s.name, s.longName || '']));
   }
 
   // DST-aware UTC offset for this.timezone at the given instant
@@ -774,13 +792,16 @@ export class UntisClient {
       const m = /^(IA\d{2})\s*([ab])$/i.exec(c.name);
       if (!m) continue;
       const key = m[1].toUpperCase();
-      (byKey.get(key) ?? byKey.set(key, []).get(key)!).push({ id: c.id, name: c.name });
+      UntisClient.getOrInit(byKey, key, () => []).push({ id: c.id, name: c.name });
     }
     const wanted = referenceClass ? normalizeToken(referenceClass) : null;
     return [...byKey.entries()]
       .filter(([key]) => !wanted || normalizeToken(key).startsWith(wanted) || wanted.startsWith(normalizeToken(key)))
-      .sort(([a], [b]) =>
-        (a === preferredKey ? -1 : b === preferredKey ? 1 : 0) || a.localeCompare(b))
+      .sort(([a], [b]) => {
+        if (a === preferredKey) return -1;
+        if (b === preferredKey) return 1;
+        return a.localeCompare(b);
+      })
       .map(([key, cohort]) => ({ key, classes: cohort }));
   }
 
@@ -807,9 +828,7 @@ export class UntisClient {
           client.getClasses(true, year.id).then((r: any) => r || []),
           this.getSubjects().catch(() => []),
         ]);
-        const subjectTitle = new Map<string, string>(
-          subjects.map((s: any) => [s.name, s.longName || '']),
-        );
+        const subjectTitle = this.buildSubjectTitleMap(subjects);
 
         // First-year cohort key: "IA" + last two digits of the school year's start year.
         const firstYearKey = `IA${String(year.startDate.getFullYear() % 100).padStart(2, '0')}`;
@@ -826,15 +845,19 @@ export class UntisClient {
         let chosen: Candidate | null = null;
         let best: Candidate | null = null;
 
+        // Cohorts are tried in order (preferred first) and we stop at the first
+        // yielding exactly four quarters, so the outer loop stays sequential; the
+        // two parallel classes within a cohort are fetched concurrently.
         for (const cohort of cohorts) {
           const dateModules = new Map<number, Set<string>>();
           const moduleLessons: Array<{ date: number }> = [];
-          for (const c of cohort.classes) {
-            const tt: any[] = (await client.getTimetableForRange(year.startDate, year.endDate, c.id, WebUntisElementType.CLASS).catch(() => null)) ?? [];
-            for (const l of tt) {
+          const timetables = await Promise.all(cohort.classes.map(c =>
+            client.getTimetableForRange(year.startDate, year.endDate, c.id, WebUntisElementType.CLASS).catch(() => null)));
+          for (const tt of timetables) {
+            for (const l of (tt as any[]) ?? []) {
               const subject = l.su?.[0]?.name;
               if (l.code === 'cancelled' || !subject || !UntisClient.isModuleSubject(subject)) continue;
-              (dateModules.get(l.date) ?? dateModules.set(l.date, new Set()).get(l.date)!).add(subject);
+              UntisClient.getOrInit(dateModules, l.date, () => new Set<string>()).add(subject);
               moduleLessons.push({ date: l.date });
             }
           }
@@ -844,6 +867,8 @@ export class UntisClient {
           if (!best || Math.abs(segments.length - 4) < Math.abs(best.segments.length - 4)) best = candidate;
         }
 
+        // best is non-null here: cohorts is non-empty (checked above), so the loop
+        // assigns best at least once.
         const pick = chosen ?? best!;
         const quarters = pick.segments.map((seg, i) => ({
           quarter: i + 1,
@@ -1032,6 +1057,137 @@ export class UntisClient {
         };
       } catch (error) {
         throw new Error(`Failed to fetch lessons for subject: ${error}`);
+      }
+    });
+  }
+
+  // Resolve a teacher from a numeric id or a name/longName query. Matching order:
+  // exact id, exact short name (case-insensitive), then substring on name/longName.
+  private resolveTeacher(teachers: any[], query: string | number): any | null {
+    if (typeof query === 'number') return teachers.find((t: any) => t.id === query) ?? null;
+    const q = query.trim().toLowerCase();
+    return teachers.find((t: any) => (t.name || '').toLowerCase() === q)
+      ?? teachers.find((t: any) =>
+        (t.name || '').toLowerCase().includes(q) || (t.longName || '').toLowerCase().includes(q))
+      ?? null;
+  }
+
+  // A teacher's year as teaching blocks. One block = (quarter, subject, class,
+  // weekday): the recurring slot a teacher holds for a subject with one class.
+  // Quarters come from getSchoolQuarters (the existing detection); each lesson is
+  // tagged with the quarter whose date range contains it. Lessons that fall in no
+  // quarter — because quarter detection failed or the subject runs outside the
+  // detected quarters — are grouped with quarter=null, i.e. the full set of the
+  // subject's dates is returned for them.
+  async getTeacherSchedule(teacherQuery: string | number, schoolYearId?: number, referenceClass?: string): Promise<{
+    teacher: { id: number; name: string; longName: string };
+    schoolYear: { id: number; name: string; startDate: string; endDate: string };
+    quartersDetected: boolean;
+    quarters: Array<{ quarter: number; semester: number; startDate: string; endDate: string }>;
+    schedule: Array<{
+      quarter: number | null;
+      semester: number | null;
+      subject: string;
+      subjectTitle: string;
+      class: string;
+      weekday: string;
+      startTime: string;
+      endTime: string;
+      halfDay: 'Vormittag' | 'Nachmittag' | 'ganztags';
+      dateRange: { startDate: string; endDate: string };
+      lessonDays: number;
+      lessonCount: number;
+      cancelledCount: number;
+      rooms: string[];
+      dates: string[];
+    }>;
+  }> {
+    return this.withReconnect(async () => {
+      const client = this.ensureClient();
+      try {
+        const year = await this.findSchoolYear(schoolYearId);
+        if (!year) throw new Error(schoolYearId ? `School year ${schoolYearId} not found` : 'No school year found for today');
+
+        // Teachers, quarter detection, and subjects are independent — fetch in parallel.
+        // Quarter detection is best-effort: if it fails, every lesson gets quarter=null.
+        const [teachers, quartersResult, subjects] = await Promise.all([
+          client.getTeachers().then((r: any) => r || []),
+          this.getSchoolQuarters(year.id, referenceClass).catch(() => null),
+          this.getSubjects().catch(() => []),
+        ]);
+
+        const teacher = this.resolveTeacher(teachers, teacherQuery);
+        if (!teacher) throw new Error(`Teacher "${teacherQuery}" not found`);
+
+        const quarters = (quartersResult?.quarters ?? []).map(x =>
+          ({ quarter: x.quarter, semester: x.semester, startDate: x.startDate, endDate: x.endDate }));
+        const subjectTitle = this.buildSubjectTitleMap(subjects);
+
+        const tt: any[] = (await client.getTimetableForRange(year.startDate, year.endDate, teacher.id, WebUntisElementType.TEACHER).catch(() => null)) ?? [];
+
+        type Block = {
+          quarter: number | null; semester: number | null; subject: string; className: string;
+          weekday: number; minStart: number; maxEnd: number; dates: Set<string>;
+          rooms: Set<string>; cancelled: number; total: number;
+        };
+        const blocks = new Map<string, Block>();
+        for (const l of tt) {
+          const subject = l.su?.[0]?.name;
+          if (!subject) continue;
+          const iso = UntisClient.untisDateToISO(l.date);
+          const q = quarters.find(x => x.startDate <= iso && iso <= x.endDate) ?? null;
+          const className = (l.kl as any[])?.[0]?.name ?? '';
+          const weekday = isoWeekdayFromISODate(iso);
+          const key = `${q?.quarter ?? 'null'}|${subject}|${className}|${weekday}`;
+          const b = UntisClient.getOrInit(blocks, key, (): Block => ({
+            quarter: q?.quarter ?? null, semester: q?.semester ?? null, subject, className, weekday,
+            minStart: l.startTime, maxEnd: l.endTime, dates: new Set(), rooms: new Set(), cancelled: 0, total: 0,
+          }));
+          b.minStart = Math.min(b.minStart, l.startTime);
+          b.maxEnd = Math.max(b.maxEnd, l.endTime);
+          b.dates.add(iso);
+          for (const r of (l.ro as any[]) || []) if (r.name) b.rooms.add(r.name);
+          b.total++;
+          if (l.code === 'cancelled') b.cancelled++;
+        }
+
+        const schedule = [...blocks.values()].map(b => {
+          const dates = [...b.dates].sort();
+          // Morning block ends by midday; an afternoon start (≥13:00) on the same slot makes it full-day.
+          const halfDay: 'Vormittag' | 'Nachmittag' | 'ganztags' =
+            b.minStart < MORNING_END_HM ? (b.maxEnd >= AFTERNOON_START_HM ? 'ganztags' : 'Vormittag') : 'Nachmittag';
+          return {
+            quarter: b.quarter,
+            semester: b.semester,
+            subject: b.subject,
+            subjectTitle: subjectTitle.get(b.subject) || '',
+            class: b.className,
+            weekday: WEEKDAY_NAMES_ISO[b.weekday],
+            startTime: formatHm(b.minStart),
+            endTime: formatHm(b.maxEnd),
+            halfDay,
+            dateRange: { startDate: dates[0], endDate: dates[dates.length - 1] },
+            lessonDays: dates.length,
+            lessonCount: b.total,
+            cancelledCount: b.cancelled,
+            rooms: [...b.rooms].sort(),
+            dates,
+          };
+        }).sort((a, b) =>
+          (a.quarter ?? 99) - (b.quarter ?? 99) ||
+          a.subject.localeCompare(b.subject) ||
+          a.class.localeCompare(b.class) ||
+          a.dateRange.startDate.localeCompare(b.dateRange.startDate));
+
+        return {
+          teacher: { id: teacher.id, name: teacher.name, longName: teacher.longName || '' },
+          schoolYear: { id: year.id, name: year.name, startDate: toISODate(year.startDate), endDate: toISODate(year.endDate) },
+          quartersDetected: quarters.length > 0,
+          quarters,
+          schedule,
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch teacher schedule: ${error}`);
       }
     });
   }

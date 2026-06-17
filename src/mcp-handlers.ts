@@ -2,7 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { UntisClient, deriveTeacherEmail } from './untis-client.js';
 import { TOOLS, toolSchemas } from './schemas.js';
-import { parseWeekday, dateForWeekdayInWeek, toISODate, WEEKDAY_NAMES_ISO } from './weekday.js';
+import { parseWeekday, dateForWeekdayInWeek, toISODate, formatHm, WEEKDAY_NAMES_ISO } from './weekday.js';
 import {
   TimetableResponse,
   StudentResponse,
@@ -292,7 +292,7 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_SCHOOL_QUARTERS,
-          description: `Get the school year's four quarters (Quartale) with their start/end dates, the modules taught in each, and lesson counts. Quarters are derived from when teaching modules change: a quarter ends as soon as its modules stop being taught and the next set begins. Detection uses a first-year IA "a"/"b" class pair as the reference. Quarters 1–2 are semester 1, quarters 3–4 are semester 2. ${SCHOOL_YEAR_HINT}`,
+          description: `Get the school year's four quarters (Quartale) with their start/end dates, the modules taught in each, and lesson counts. Quarters are derived from when teaching modules change: a quarter ends as soon as its modules stop being taught and the next set begins. A "module" is a subject whose name contains a digit (e.g. "165", "M323"), which excludes recurring non-modules like Klassenstunde or Sport. Detection uses the first-year IA "a"/"b" class pair as the reference (e.g. "IA25" in 2025/26); if it doesn't yield exactly four quarters the next IA cohort is tried, falling back to the one closest to four. Quarters 1–2 are semester 1, quarters 3–4 are semester 2. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -310,6 +310,20 @@ const TOOL_LIST = [
             properties: {
               schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year)' },
               referenceClass: { type: 'string', description: 'Reference IA cohort to derive semesters from, e.g. "IA25" (optional; defaults to the first-year IA cohort).' },
+            },
+            required: [],
+          },
+        },
+        {
+          name: TOOLS.GET_TEACHER_SCHEDULE,
+          description: `Get a teacher's full-year teaching schedule as blocks. For each subject/class the teacher teaches, returns the quarter (Quartal), subject, class, weekday, time, half-day (Vormittag/Nachmittag/ganztags), date range, lesson days and room. Quarters are derived via getSchoolQuarters; lessons that fall outside any detected quarter (or when no quarters can be detected) are returned with quarter=null and the full list of the subject's dates. ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              teacher: { type: 'string', description: 'Teacher short code (e.g. "DivG") or part of the long name. Either this or teacherId is required.' },
+              teacherId: { type: 'number', description: 'Teacher ID (optional alternative to teacher).' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional, use getSchoolYear to find IDs; defaults to current year)' },
+              referenceClass: { type: 'string', description: 'Reference IA cohort for quarter detection, e.g. "IA25" (optional).' },
             },
             required: [],
           },
@@ -638,8 +652,8 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
                 name: unit.name,
                 startTime: unit.startTime,
                 endTime: unit.endTime,
-                startFormatted: `${String(Math.floor(unit.startTime / 100)).padStart(2, '0')}:${String(unit.startTime % 100).padStart(2, '0')}`,
-                endFormatted: `${String(Math.floor(unit.endTime / 100)).padStart(2, '0')}:${String(unit.endTime % 100).padStart(2, '0')}`,
+                startFormatted: formatHm(unit.startTime),
+                endFormatted: formatHm(unit.endTime),
               })),
             })),
           };
@@ -740,6 +754,12 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
         case TOOLS.GET_SEMESTERS: {
           const semArgs = validatedArgs as any;
           result = await untisClient.getSemesters(semArgs.schoolYearId, semArgs.referenceClass);
+          break;
+        }
+
+        case TOOLS.GET_TEACHER_SCHEDULE: {
+          const tschArgs = validatedArgs as any;
+          result = await untisClient.getTeacherSchedule(tschArgs.teacherId ?? tschArgs.teacher, tschArgs.schoolYearId, tschArgs.referenceClass);
           break;
         }
 
