@@ -160,6 +160,17 @@ class StubUntisClient extends UntisClient {
       ],
     };
   }
+
+  override async getCompanionClasses(classRef: number | string, _schoolYearId?: number, variant?: 'BM' | 'ABU') {
+    return {
+      class: { id: typeof classRef === 'number' ? classRef : 42, name: typeof classRef === 'string' ? classRef : 'IA24 a' },
+      classFound: true,
+      companionNames: variant === 'BM' ? ['BM24 a'] : [],
+      fetchIds: variant === 'BM' ? [42, 77] : [42],
+      variantChoiceRequired: !variant,
+      ...(variant ? { variantApplied: variant } : { variants: { bm: { id: 77, name: 'BM24 a' }, abu: { id: 91, name: 'AB24 c' } } }),
+    };
+  }
 }
 
 // ─── Client/Server wiring ──────────────────────────────────────────────────────
@@ -191,14 +202,15 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 29 tools', async () => {
+  it('returns all 30 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(30);
     const names = tools.map(t => t.name);
     expect(names).toContain('getTeachers');
     expect(names).toContain('getTimetable');
     expect(names).toContain('findSubstituteTeachers');
     expect(names).toContain('getTeacherSchedule');
+    expect(names).toContain('getCompanionClasses');
   });
 });
 
@@ -559,6 +571,34 @@ describe('getTeacherSchedule', () => {
 
   it('rejects calls without teacher or teacherId', async () => {
     const result = await client.callTool({ name: 'getTeacherSchedule', arguments: {} });
+    expect(result.isError).toBe(true);
+  });
+});
+
+// ─── getCompanionClasses ──────────────────────────────────────────────────────
+
+describe('getCompanionClasses', () => {
+  it('flags variantChoiceRequired and exposes both options for an ambiguous IA class', async () => {
+    const data = await callTool('getCompanionClasses', { className: 'IA24 a' });
+    expect(data.variantChoiceRequired).toBe(true);
+    expect(data.variants).toMatchObject({ bm: { name: 'BM24 a' }, abu: { name: 'AB24 c' } });
+    expect(data.fetchIds).toEqual([42]);
+  });
+
+  it('resolves the chosen variant when variant is provided', async () => {
+    const data = await callTool('getCompanionClasses', { className: 'IA24 a', variant: 'BM' });
+    expect(data.variantApplied).toBe('BM');
+    expect(data.companionNames).toEqual(['BM24 a']);
+    expect(data.fetchIds).toEqual([42, 77]);
+  });
+
+  it('accepts classId as an alternative to className', async () => {
+    const data = await callTool('getCompanionClasses', { classId: 42 });
+    expect(data.class.id).toBe(42);
+  });
+
+  it('rejects calls without className or classId', async () => {
+    const result = await client.callTool({ name: 'getCompanionClasses', arguments: {} });
     expect(result.isError).toBe(true);
   });
 });

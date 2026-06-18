@@ -102,6 +102,65 @@ describe('getRooms', () => {
   });
 });
 
+// ─── getCompanionClasses ──────────────────────────────────────────────────────
+
+describe('getCompanionClasses', () => {
+  const COMPANION_CLASSES = [
+    { id: 1, name: 'IA24 a' },
+    { id: 2, name: 'IA24 b' },
+    { id: 3, name: 'BM24 a' },
+    { id: 5, name: 'AB24 c' },
+  ];
+
+  it('resolves a normal class by name to [self, ...companions]', async () => {
+    mockInstance.getClasses.mockResolvedValue(COMPANION_CLASSES);
+    const client = await makeClient();
+    const r = await client.getCompanionClasses('BM24 a');
+    expect(r.companionNames).toEqual(['IA24 a']);
+    expect(r.fetchIds).toEqual([3, 1]);
+    expect(r.variantChoiceRequired).toBe(false);
+  });
+
+  it('flags variantChoiceRequired for IA a/b without an IA c in its year', async () => {
+    mockInstance.getClasses.mockResolvedValue(COMPANION_CLASSES);
+    const client = await makeClient();
+    const r = await client.getCompanionClasses('IA24 a');
+    expect(r.variantChoiceRequired).toBe(true);
+    expect(r.variants).toEqual({ bm: { id: 3, name: 'BM24 a' }, abu: { id: 5, name: 'AB24 c' } });
+  });
+
+  it('resolves the chosen variant', async () => {
+    mockInstance.getClasses.mockResolvedValue(COMPANION_CLASSES);
+    const client = await makeClient();
+    const r = await client.getCompanionClasses('IA24 a', undefined, 'BM');
+    expect(r.variantApplied).toBe('BM');
+    expect(r.fetchIds).toEqual([1, 3]);
+  });
+
+  it('resolves by classId', async () => {
+    mockInstance.getClasses.mockResolvedValue(COMPANION_CLASSES);
+    const client = await makeClient();
+    const r = await client.getCompanionClasses(3);
+    expect(r.class).toEqual({ id: 3, name: 'BM24 a' });
+    expect(r.companionNames).toEqual(['IA24 a']);
+  });
+
+  it('throws for an unknown classId', async () => {
+    mockInstance.getClasses.mockResolvedValue(COMPANION_CLASSES);
+    const client = await makeClient();
+    await expect(client.getCompanionClasses(999)).rejects.toThrow('Class with id 999 not found');
+  });
+
+  it('handles an unknown class name as not found', async () => {
+    mockInstance.getClasses.mockResolvedValue(COMPANION_CLASSES);
+    const client = await makeClient();
+    const r = await client.getCompanionClasses('XY99 z');
+    expect(r.classFound).toBe(false);
+    expect(r.class).toBeNull();
+    expect(r.companionNames).toEqual([]);
+  });
+});
+
 // ─── getTimetableForClass ─────────────────────────────────────────────────────
 
 describe('getTimetableForClass', () => {

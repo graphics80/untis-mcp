@@ -328,6 +328,20 @@ const TOOL_LIST = [
             required: [],
           },
         },
+        {
+          name: TOOLS.GET_COMPANION_CLASSES,
+          description: `Resolve a single class's linked companion classes (Partnerklassen) at the BZZ. A vocational class's lessons are kept under several separate WebUntis classes (Fachunterricht, Berufsmaturität BM, Allgemeinbildung ABU/AB); a cancellation in a companion class also affects the main class. Returns companionNames plus a fetchIds array ([self, ...companions]) so all relevant timetables can be loaded together. SPECIAL CASE: for an "IA<year>a/b" class whose year has no "IA<year>c" class, the BM/ABU mapping is ambiguous and the response has variantChoiceRequired=true with both options in "variants" (bm/abu). When that happens, ASK THE USER whether the learner attends BM or ABU, then call this tool again with variant="BM" or variant="ABU". ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              className: { type: 'string', description: 'Class name, e.g. "IA24 a" (whitespace/case-insensitive). Either this or classId is required.' },
+              classId: { type: 'number', description: 'WebUntis class ID (optional alternative to className).' },
+              variant: { type: 'string', enum: ['BM', 'ABU'], description: 'For an ambiguous IA a/b class (no IA c in its year): which side the learner attends. Only needed when a prior call returned variantChoiceRequired=true.' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year).' },
+            },
+            required: [],
+          },
+        },
 ];
 
 export function registerHandlers(server: Server, untisClient: UntisClient, emailDomain?: string): void {
@@ -760,6 +774,12 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
         case TOOLS.GET_TEACHER_SCHEDULE: {
           const tschArgs = validatedArgs as any;
           result = await untisClient.getTeacherSchedule(tschArgs.teacherId ?? tschArgs.teacher, tschArgs.schoolYearId, tschArgs.referenceClass);
+          break;
+        }
+
+        case TOOLS.GET_COMPANION_CLASSES: {
+          const ccArgs = validatedArgs as any;
+          result = await untisClient.getCompanionClasses(ccArgs.classId ?? ccArgs.className, ccArgs.schoolYearId, ccArgs.variant);
           break;
         }
 

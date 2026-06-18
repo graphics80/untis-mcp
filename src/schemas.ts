@@ -30,6 +30,7 @@ export const TOOLS = {
   GET_SCHOOL_QUARTERS: 'getSchoolQuarters',
   GET_SEMESTERS: 'getSemesters',
   GET_TEACHER_SCHEDULE: 'getTeacherSchedule',
+  GET_COMPANION_CLASSES: 'getCompanionClasses',
 } as const;
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format');
@@ -157,4 +158,10 @@ export const toolSchemas = {
     schoolYearId: schoolYearIdField,
     referenceClass: z.string().min(1).optional(),
   }).refine((d) => !!d.teacher || !!d.teacherId, { message: 'Provide either teacher (name/short code) or teacherId' }),
+  [TOOLS.GET_COMPANION_CLASSES]: z.object({
+    className: z.string().min(1).optional(),
+    classId: z.number().int().positive().optional(),
+    variant: z.enum(['BM', 'ABU']).optional(),
+    schoolYearId: schoolYearIdField,
+  }).refine((d) => !!d.className || !!d.classId, { message: 'Provide either className or classId' }),
 };

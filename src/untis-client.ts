@@ -1,5 +1,6 @@
 import { WebUntis, WebUntisElementType } from 'webuntis';
 import { toISODate, isoWeekdayFromISODate, formatHm, WEEKDAY_NAMES_ISO } from './weekday.js';
+import { buildClassMap, normalizeClassName, resolveClassCompanions, CompanionResolution } from './class-linking.js';
 
 // Half-day classification thresholds (WebUntis Hmm). A slot starting before noon
 // is a morning slot; if it also runs to/past 13:00 it spans lunch → full day.
@@ -229,6 +230,35 @@ export class UntisClient {
       } catch (error) {
         throw new Error(`Failed to fetch classes: ${error}`);
       }
+    });
+  }
+
+  // Resolve a single class's linked companion classes (Partnerklassen) so the
+  // caller can load all relevant timetables with one fetchIds array. classRef
+  // may be a WebUntis class id or a class name (whitespace/case-insensitive).
+  // For an IA a/b class whose year has no IA c the BM/ABU mapping is ambiguous:
+  // without `variant` the result flags variantChoiceRequired and exposes both
+  // options; pass variant ('BM'|'ABU') to resolve the chosen side.
+  async getCompanionClasses(
+    classRef: number | string,
+    schoolYearId?: number,
+    variant?: 'BM' | 'ABU',
+  ): Promise<CompanionResolution> {
+    return this.withReconnect(async () => {
+      const classes = await this.getClasses(schoolYearId);
+      const map = buildClassMap(classes);
+
+      let self: { id: number | null; name: string };
+      if (typeof classRef === 'number') {
+        const found = classes.find((c: any) => c.id === classRef);
+        if (!found) throw new Error(`Class with id ${classRef} not found`);
+        self = { id: found.id, name: found.name };
+      } else {
+        const found = map.get(normalizeClassName(classRef));
+        self = found ? { id: found.id, name: found.name } : { id: null, name: classRef };
+      }
+
+      return resolveClassCompanions(self, map, variant);
     });
   }
 
