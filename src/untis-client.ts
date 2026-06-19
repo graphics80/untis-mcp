@@ -328,6 +328,69 @@ export class UntisClient {
     });
   }
 
+  // A class's homeroom teacher(s) (Klassenlehrer) and responsible department head
+  // (zuständige Abteilungsleitung / AL). Both come straight from the class object's
+  // teacher1/teacher2 fields — no timetable scan. teacher1 is the homeroom teacher;
+  // teacher2 is usually the AL, modelled at the BZZ as a special teacher account
+  // whose short name is "AL: <code>" (longName "Zuständige Abteilungsleitung"), but
+  // occasionally a real co-homeroom teacher. Each teacher id is classified by that
+  // "AL:" name pattern: AL accounts become departmentHead, the rest classTeachers.
+  // The AL <code> is itself a teacher short name (e.g. "MaKe" → "Maurizi Kevin"), so
+  // departmentHead is resolved to that real teacher when the code matches one;
+  // `resolved` flags whether it did. classRef is a WebUntis class id or a class name
+  // (whitespace/case-insensitive).
+  async getClassLeadership(classRef: number | string, schoolYearId?: number): Promise<{
+    class: { id: number; name: string; longName: string } | null;
+    classFound: boolean;
+    classTeachers: Array<{ id: number; name: string; longName: string; title: string }>;
+    departmentHead: { code: string; id: number; name: string; longName: string; resolved: boolean } | null;
+  }> {
+    return this.withReconnect(async () => {
+      const [classes, teachers] = await Promise.all([
+        this.getClasses(schoolYearId),
+        this.getTeachers(),
+      ]);
+
+      const klasse = typeof classRef === 'number'
+        ? classes.find((c: any) => c.id === classRef)
+        : buildClassMap(classes).get(normalizeClassName(classRef));
+      if (!klasse) {
+        return { class: null, classFound: false, classTeachers: [], departmentHead: null };
+      }
+
+      const classTeachers: Array<{ id: number; name: string; longName: string; title: string }> = [];
+      let departmentHead: { code: string; id: number; name: string; longName: string; resolved: boolean } | null = null;
+
+      // Only teacher1/teacher2 (≤2 ids) and one AL code are ever looked up, so a
+      // direct find over teachers is cheaper than indexing all of them into Maps.
+      for (const tid of [klasse.teacher1, klasse.teacher2]) {
+        if (!tid) continue;
+        const t = teachers.find((x: any) => x.id === tid);
+        const name = t?.name ?? '';
+        const al = /^AL:\s*(.*)$/i.exec(name);
+        if (!al) {
+          classTeachers.push({ id: tid, name, longName: t?.longName ?? '', title: t?.title ?? '' });
+          continue;
+        }
+        // First AL account wins as the responsible department head; its <code> is a
+        // teacher short name, so resolve it to the real person when one matches.
+        if (departmentHead) continue;
+        const code = al[1].trim();
+        const person = teachers.find((x: any) => (x.name ?? '').toLowerCase() === code.toLowerCase());
+        departmentHead = person
+          ? { code, id: person.id, name: person.name, longName: person.longName ?? '', resolved: true }
+          : { code, id: tid, name, longName: t?.longName ?? '', resolved: false };
+      }
+
+      return {
+        class: { id: klasse.id, name: klasse.name, longName: klasse.longName ?? '' },
+        classFound: true,
+        classTeachers,
+        departmentHead,
+      };
+    });
+  }
+
   async getRooms(): Promise<any[]> {
     return this.cached('rooms', () => this.withReconnect(async () => {
       const client = this.ensureClient();

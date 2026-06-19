@@ -34,7 +34,7 @@ bzz.webuntis.com
 
 ---
 
-## Tools (29 total)
+## Tools (30 total)
 
 | Tool | Description |
 |------|-------------|
@@ -58,6 +58,7 @@ bzz.webuntis.com
 | `getSemesters` | The school year's two semesters with the semester-change date |
 | `getTeacherSubjects` | Which subjects each teacher teaches (scans timetable history) |
 | `getTeachersForClass` | All teachers who teach a specific class (scans recent timetable) |
+| `getClassLeadership` | A class's homeroom teacher(s) (Klassenlehrer) and responsible department head (zuständige Abteilungsleitung / AL), read from the class's `teacher1`/`teacher2` fields |
 | `getTeacherSchedule` | A teacher's full-year schedule as blocks (quarter, subject, class, weekday, time, half-day) |
 | `findSubstituteTeachers` | Teachers qualified for a subject AND free at a given time slot |
 | `checkTeacherAvailability` | Whether a teacher is free at a specific time, and what they're teaching if not |

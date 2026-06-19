@@ -499,3 +499,25 @@ describe('getTeachersForClass schoolYearId', () => {
     expect(() => schema.parse({ classId: 10, days: 60, schoolYearId: 42 })).not.toThrow();
   });
 });
+
+// ─── getClassLeadership ──────────────────────────────────────────────────────
+
+describe('getClassLeadership', () => {
+  const schema = toolSchemas[TOOLS.GET_CLASS_LEADERSHIP];
+
+  it('accepts className only', () => {
+    expect(() => schema.parse({ className: 'IA24 a' })).not.toThrow();
+  });
+
+  it('accepts classId only', () => {
+    expect(() => schema.parse({ classId: 42 })).not.toThrow();
+  });
+
+  it('accepts className + schoolYearId', () => {
+    expect(() => schema.parse({ className: 'IA24 a', schoolYearId: 42 })).not.toThrow();
+  });
+
+  it('rejects empty object (needs className or classId)', () => {
+    expect(() => schema.parse({})).toThrow();
+  });
+});
