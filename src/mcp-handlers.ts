@@ -336,6 +336,19 @@ const TOOL_LIST = [
             required: [],
           },
         },
+        {
+          name: TOOLS.GET_CLASS_LEADERSHIP,
+          description: `Get a class's homeroom teacher(s) (Klassenlehrer) and its responsible department head (zuständige Abteilungsleitung / AL). Read directly from the class's teacher1/teacher2 fields — no timetable scan, unlike getTeachersForClass which lists everyone who teaches the class. teacher1 is the homeroom teacher; teacher2 is usually the AL (a special "AL: <code>" account) but occasionally a co-homeroom teacher. The response splits them into classTeachers (real homeroom teachers) and departmentHead (the AL). The AL's short code (e.g. "MaKe") is itself a teacher short name, so departmentHead is resolved to that real teacher (full name + derived email) with resolved=true; resolved=false means the code matched no teacher. Emails are derived where available. ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              className: { type: 'string', description: 'Class name, e.g. "IA24 a" (whitespace/case-insensitive). Either this or classId is required.' },
+              classId: { type: 'number', description: 'WebUntis class ID (optional alternative to className).' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year).' },
+            },
+            required: [],
+          },
+        },
 ];
 
 export function registerHandlers(server: Server, untisClient: UntisClient, emailDomain?: string): void {
@@ -761,6 +774,24 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
         case TOOLS.GET_COMPANION_CLASSES: {
           const ccArgs = validatedArgs as any;
           result = await untisClient.getCompanionClasses(ccArgs.classId ?? ccArgs.className, ccArgs.schoolYearId, ccArgs.variant);
+          break;
+        }
+
+        case TOOLS.GET_CLASS_LEADERSHIP: {
+          const clArgs = validatedArgs as any;
+          const leadership = await untisClient.getClassLeadership(clArgs.classId ?? clArgs.className, clArgs.schoolYearId);
+          const head = leadership.departmentHead;
+          result = {
+            ...leadership,
+            classTeachers: leadership.classTeachers.map((t) => ({
+              ...t,
+              ...(emailDomain && t.longName ? { email: deriveTeacherEmail(t.longName, emailDomain) } : {}),
+            })),
+            // Only the resolved real AL person gets a derived email — never the generic account.
+            departmentHead: head && emailDomain && head.resolved && head.longName
+              ? { ...head, email: deriveTeacherEmail(head.longName, emailDomain) }
+              : head,
+          };
           break;
         }
 

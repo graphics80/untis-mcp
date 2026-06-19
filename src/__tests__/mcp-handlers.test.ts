@@ -169,6 +169,18 @@ class StubUntisClient extends UntisClient {
       ...(variant ? { variantApplied: variant } : { variants: { bm: { id: 77, name: 'BM24 a' }, abu: { id: 91, name: 'AB24 c' } } }),
     };
   }
+
+  override async getClassLeadership(classRef: number | string, _schoolYearId?: number) {
+    if (classRef === 'NOPE') {
+      return { class: null, classFound: false, classTeachers: [], departmentHead: null };
+    }
+    return {
+      class: { id: typeof classRef === 'number' ? classRef : 10, name: typeof classRef === 'string' ? classRef : '3A', longName: 'Klasse 3A' },
+      classFound: true,
+      classTeachers: [{ id: 1, name: 'MUS', longName: 'Mustermann Max', title: 'Mag.' }],
+      departmentHead: { code: 'MaKe', id: 42, name: 'MaKe', longName: 'Maurizi Kevin', resolved: true },
+    };
+  }
 }
 
 // ─── Client/Server wiring ──────────────────────────────────────────────────────
@@ -200,9 +212,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 29 tools', async () => {
+  it('returns all 30 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(30);
     const names = tools.map(t => t.name);
     expect(names).not.toContain('getStudents');
     expect(names).toContain('getTeachers');
@@ -210,6 +222,7 @@ describe('tools/list', () => {
     expect(names).toContain('findSubstituteTeachers');
     expect(names).toContain('getTeacherSchedule');
     expect(names).toContain('getCompanionClasses');
+    expect(names).toContain('getClassLeadership');
   });
 });
 
@@ -591,6 +604,37 @@ describe('getCompanionClasses', () => {
 
   it('rejects calls without className or classId', async () => {
     const result = await client.callTool({ name: 'getCompanionClasses', arguments: {} });
+    expect(result.isError).toBe(true);
+  });
+});
+
+// ─── getClassLeadership ───────────────────────────────────────────────────────
+
+describe('getClassLeadership', () => {
+  it('returns the homeroom teacher (with email) and the department head', async () => {
+    const data = await callTool('getClassLeadership', { className: '3A' });
+    expect(data.classFound).toBe(true);
+    expect(data.class).toMatchObject({ id: 10, name: '3A' });
+    expect(data.classTeachers).toHaveLength(1);
+    expect(data.classTeachers[0]).toMatchObject({ name: 'MUS', email: 'max.mustermann@bzz.ch' });
+    // The AL code resolves to the real teacher, with a derived email.
+    expect(data.departmentHead).toMatchObject({ code: 'MaKe', id: 42, longName: 'Maurizi Kevin', resolved: true, email: 'kevin.maurizi@bzz.ch' });
+  });
+
+  it('accepts classId as an alternative to className', async () => {
+    const data = await callTool('getClassLeadership', { classId: 10 });
+    expect(data.class.id).toBe(10);
+  });
+
+  it('reports classFound=false for an unknown class', async () => {
+    const data = await callTool('getClassLeadership', { className: 'NOPE' });
+    expect(data.classFound).toBe(false);
+    expect(data.classTeachers).toEqual([]);
+    expect(data.departmentHead).toBeNull();
+  });
+
+  it('rejects calls without className or classId', async () => {
+    const result = await client.callTool({ name: 'getClassLeadership', arguments: {} });
     expect(result.isError).toBe(true);
   });
 });
