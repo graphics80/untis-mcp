@@ -366,10 +366,14 @@ export class UntisClient {
       for (const tid of [klasse.teacher1, klasse.teacher2]) {
         if (!tid) continue;
         const t = teachers.find((x: any) => x.id === tid);
-        const name = t?.name ?? '';
+        // An id can reference a teacher missing from the (active) teachers list; skip
+        // it rather than emit an entry with empty name/longName that a client can't tell
+        // apart from a real teacher with missing data.
+        if (!t) continue;
+        const name = t.name ?? '';
         const al = /^AL:\s*(.*)$/i.exec(name);
         if (!al) {
-          classTeachers.push({ id: tid, name, longName: t?.longName ?? '', title: t?.title ?? '' });
+          classTeachers.push({ id: tid, name, longName: t.longName ?? '', title: t.title ?? '' });
           continue;
         }
         // First AL account wins as the responsible department head; its <code> is a
@@ -379,7 +383,7 @@ export class UntisClient {
         const person = teachers.find((x: any) => (x.name ?? '').toLowerCase() === code.toLowerCase());
         departmentHead = person
           ? { code, id: person.id, name: person.name, longName: person.longName ?? '', resolved: true }
-          : { code, id: tid, name, longName: t?.longName ?? '', resolved: false };
+          : { code, id: tid, name, longName: t.longName ?? '', resolved: false };
       }
 
       return {
