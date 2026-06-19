@@ -351,6 +351,16 @@ const TOOL_LIST = [
         },
 ];
 
+// Build the optional `{ email }` part of a teacher object. Spread into the
+// result so the field is omitted entirely when no domain is configured or the
+// longName yields no derivable address (placeholder/group accounts, single-word
+// names) — never a bare empty-string email.
+function emailField(emailDomain: string | undefined, longName?: string): { email?: string } {
+  if (!emailDomain || !longName) return {};
+  const email = deriveTeacherEmail(longName, emailDomain);
+  return email ? { email } : {};
+}
+
 export function registerHandlers(server: Server, untisClient: UntisClient, emailDomain?: string): void {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_LIST }));
 
@@ -414,9 +424,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
               name: teacher.name,
               longName: teacher.longName || '',
               title: teacher.title || '',
-              ...(emailDomain && teacher.longName
-                ? { email: deriveTeacherEmail(teacher.longName, emailDomain) }
-                : {}),
+              ...emailField(emailDomain, teacher.longName),
             })),
           };
           break;
@@ -680,7 +688,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
           );
           const substituteTeachers = substitutes.map((t: any) => ({
             ...t,
-            ...(emailDomain && t.longName ? { email: deriveTeacherEmail(t.longName, emailDomain) } : {}),
+            ...emailField(emailDomain, t.longName),
           }));
           result = {
             date: subArgs.date,
@@ -697,7 +705,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
           const rawTeachers = await untisClient.getTeachersForClass(tfcArgs.classId, tfcArgs.days, tfcArgs.schoolYearId);
           const classTeachers = rawTeachers.map((t) => ({
             ...t,
-            ...(emailDomain && t.longName ? { email: deriveTeacherEmail(t.longName, emailDomain) } : {}),
+            ...emailField(emailDomain, t.longName),
           }));
           result = {
             classId: tfcArgs.classId,
@@ -785,11 +793,11 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
             ...leadership,
             classTeachers: leadership.classTeachers.map((t) => ({
               ...t,
-              ...(emailDomain && t.longName ? { email: deriveTeacherEmail(t.longName, emailDomain) } : {}),
+              ...emailField(emailDomain, t.longName),
             })),
             // Only the resolved real AL person gets a derived email — never the generic account.
-            departmentHead: head && emailDomain && head.resolved && head.longName
-              ? { ...head, email: deriveTeacherEmail(head.longName, emailDomain) }
+            departmentHead: head && head.resolved
+              ? { ...head, ...emailField(emailDomain, head.longName) }
               : head,
           };
           break;

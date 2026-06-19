@@ -44,7 +44,21 @@ describe('deriveTeacherEmail', () => {
     expect(deriveTeacherEmail('Müller Jörg', 'bzz.ch')).toBe('joerg.mueller@bzz.ch');
   });
 
+  it('folds accented Latin letters to their base letter', () => {
+    expect(deriveTeacherEmail('Probst André', 'bzz.ch')).toBe('andre.probst@bzz.ch');
+    expect(deriveTeacherEmail('Ehrenberg Géraldine', 'bzz.ch')).toBe('geraldine.ehrenberg@bzz.ch');
+    // Umlaut digraph and accent in the same name.
+    expect(deriveTeacherEmail('Wäger René', 'bzz.ch')).toBe('rene.waeger@bzz.ch');
+  });
+
   it('returns empty string for single-word longName', () => {
     expect(deriveTeacherEmail('Mustermann', 'bzz.ch')).toBe('');
+  });
+
+  it('returns empty string for placeholder / group accounts', () => {
+    expect(deriveTeacherEmail('Div. Lehrer IT', 'bzz.ch')).toBe('');
+    expect(deriveTeacherEmail('Diverse FaBe', 'bzz.ch')).toBe('');
+    expect(deriveTeacherEmail('QV - keine Lehrperson', 'bzz.ch')).toBe('');
+    expect(deriveTeacherEmail('Zuständige Abteilungsleitung', 'bzz.ch')).toBe('');
   });
 });

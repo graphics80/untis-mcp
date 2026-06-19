@@ -222,7 +222,7 @@ The secret URL is the only credential. To revoke everyone (e.g. it leaked), chan
 nano /home/mcp/untis-mcp/.env.production
 # Set MCP_SECRET to a fresh value:  uuidgen
 
-docker compose restart   # no rebuild needed
+docker compose up -d   # recreate to re-read .env.production (restart alone won't)
 ```
 
 Every teacher must then update their connector URL to the new secret. There are no per-teacher accounts: access is all-or-nothing on the shared URL.

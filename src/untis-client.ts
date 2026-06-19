@@ -13,13 +13,29 @@ const AFTERNOON_START_HM = 1300; // 13:00
 // "Stäfa" → "staefa", "HO " → "ho".
 function normalizeToken(s: string): string {
   return s.toLowerCase()
+    // German umlauts fold to digraphs (ä→ae) — do this BEFORE the generic
+    // diacritic strip so they don't collapse to bare a/o/u.
     .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+    // Strip any remaining diacritics so accented Latin letters survive as their
+    // base letter instead of being deleted: é→e, à→a, ç→c (e.g. "André"→"andre").
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]/g, '');
 }
 
+// Group/function accounts in WebUntis that are not real people, so no email is
+// derivable: "Div. Lehrer IT", "Diverse FaBe", "QV - keine Lehrperson", and the
+// generic "Zuständige Abteilungsleitung" placeholders behind the AL: codes.
+function isPlaceholderAccount(longName: string): boolean {
+  const s = longName.trim().toLowerCase();
+  return s.startsWith('div.') || s.startsWith('diverse')
+    || s.includes('keine lehrperson') || s.includes('abteilungsleitung');
+}
+
 // longName format: "Lastname Firstname" → "firstname.lastname@domain"
-// Compound last names (e.g. "Reichner-Ris") use only the first part → "reichner"
+// Compound last names (e.g. "Reichner-Ris") use only the first part → "reichner".
+// Returns '' for placeholder accounts and any longName without a first+last name.
 export function deriveTeacherEmail(longName: string, domain: string): string {
+  if (isPlaceholderAccount(longName)) return '';
   const parts = longName.trim().split(/\s+/);
   if (parts.length < 2) return '';
   const firstName = parts[parts.length - 1];
