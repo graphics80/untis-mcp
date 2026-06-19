@@ -5,7 +5,6 @@ export const TOOLS = {
   GET_TEACHERS: 'getTeachers',
   GET_CLASSES: 'getClasses',
   GET_ROOMS: 'getRooms',
-  GET_STUDENTS: 'getStudents',
   GET_ABSENCES: 'getAbsences',
   GET_SUBJECTS_LIST: 'getSubjectsList',
   GET_TEACHER_SUBJECTS: 'getTeacherSubjects',
@@ -56,7 +55,6 @@ export const toolSchemas = {
     schoolYearId: schoolYearIdField,
   }),
   [TOOLS.GET_ROOMS]: z.object({}),
-  [TOOLS.GET_STUDENTS]: z.object({}),
   [TOOLS.GET_ABSENCES]: z.object({
     startDate: dateSchema.optional(),
     endDate: dateSchema.optional(),

@@ -14,7 +14,6 @@ import { UntisClient } from '../untis-client.js';
 const STUB_TEACHER = { id: 1, name: 'MUS', longName: 'Mustermann Max', title: 'Mag.' };
 const STUB_CLASS = { id: 10, name: '3A', longName: 'Klasse 3A' };
 const STUB_ROOM = { id: 20, name: 'A01', longName: 'Raum A01', building: 'A' };
-const STUB_STUDENT = { id: 100, firstName: 'Max', lastName: 'Muster', key: 'mm' };
 const STUB_SUBJECT = { id: 5, name: 'M', longName: 'Mathematik', alternateName: 'MAT' };
 const STUB_HOLIDAY = { id: 7, name: 'Ostern', longName: 'Osterferien', startDate: 20260330, endDate: 20260410 };
 const STUB_DEPT = { id: 3, name: 'IT', longName: 'Informatik' };
@@ -33,7 +32,6 @@ class StubUntisClient extends UntisClient {
   override async getTeachers() { return [STUB_TEACHER]; }
   override async getClasses(_schoolYearId?: number) { return [STUB_CLASS]; }
   override async getRooms() { return [STUB_ROOM]; }
-  override async getStudents() { return [STUB_STUDENT]; }
   override async getSubjects() { return [STUB_SUBJECT]; }
   override async getHolidays() { return [STUB_HOLIDAY]; }
   override async getDepartments() { return [STUB_DEPT]; }
@@ -202,10 +200,11 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 30 tools', async () => {
+  it('returns all 29 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(30);
+    expect(tools).toHaveLength(29);
     const names = tools.map(t => t.name);
+    expect(names).not.toContain('getStudents');
     expect(names).toContain('getTeachers');
     expect(names).toContain('getTimetable');
     expect(names).toContain('findSubstituteTeachers');
@@ -243,13 +242,6 @@ describe('getRooms', () => {
   it('returns room list', async () => {
     const data = await callTool('getRooms', {});
     expect(data.rooms[0].name).toBe('A01');
-  });
-});
-
-describe('getStudents', () => {
-  it('returns student list', async () => {
-    const data = await callTool('getStudents', {});
-    expect(data.students[0].firstName).toBe('Max');
   });
 });
 

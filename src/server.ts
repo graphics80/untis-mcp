@@ -2,6 +2,7 @@
 import { randomUUID, timingSafeEqual } from 'crypto';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import * as dotenv from 'dotenv';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { UntisClient } from './untis-client.js';
@@ -46,6 +47,10 @@ export interface AppConfig {
   mcpSecret: string;
   timezone?: string;
   emailDomain?: string;
+  /** Rate-limit window in ms (default 60_000). */
+  rateLimitWindowMs?: number;
+  /** Max requests to the MCP endpoint per window per client (default 120). */
+  rateLimitMax?: number;
 }
 
 export function createApp(config: AppConfig): {
@@ -61,6 +66,8 @@ export function createApp(config: AppConfig): {
     mcpSecret,
     timezone = 'Europe/Zurich',
     emailDomain,
+    rateLimitWindowMs = 60_000,
+    rateLimitMax = 120,
   } = config;
 
   const MCP_PATH = '/untis';
@@ -85,9 +92,23 @@ export function createApp(config: AppConfig): {
   }, 10 * 60 * 1000);
 
   const app = express();
+  // One reverse-proxy hop (Apache/Nginx) sits in front in production, so honor a single
+  // X-Forwarded-For so the rate limiter keys on the real client when the proxy forwards it.
+  app.set('trust proxy', 1);
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+
+  // Throttle the MCP endpoint: all access runs through one shared WebUntis service
+  // account, so an unbounded request loop could get that account locked and take the
+  // server down for everyone. Caps requests per client per window; /health is exempt.
+  app.use(MCP_PATH, rateLimit({
+    windowMs: rateLimitWindowMs,
+    max: rateLimitMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests' },
+  }));
 
   // ── Health ────────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {
@@ -160,8 +181,12 @@ async function main(): Promise<void> {
   const envSecret = process.env.MCP_SECRET?.trim();
   const mcpSecret = envSecret || randomUUID();
 
+  const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) : undefined;
+  const rateLimitMax = process.env.RATE_LIMIT_MAX ? parseInt(process.env.RATE_LIMIT_MAX, 10) : undefined;
+
   const { app, mcpSessions, sweepInterval } = createApp({
     school, untisUsername, untisPassword, untisBaseUrl, mcpSecret, timezone, emailDomain,
+    rateLimitWindowMs, rateLimitMax,
   });
 
   const httpServer = app.listen(port, '0.0.0.0', () => {

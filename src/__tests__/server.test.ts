@@ -114,6 +114,34 @@ describe('MCP endpoint secret gate', () => {
   });
 });
 
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+
+describe('rate limiting', () => {
+  it('returns 429 once the per-window cap is exceeded', async () => {
+    const limited = createApp({ ...makeTestConfig(), rateLimitMax: 2, rateLimitWindowMs: 60_000 });
+    try {
+      // Hits to the secret-gated path count against the limit even when the secret is wrong.
+      const send = () => request(limited.app).post('/untis/wrong-secret').send({ jsonrpc: '2.0', id: 1 });
+      expect((await send()).status).toBe(404);
+      expect((await send()).status).toBe(404);
+      expect((await send()).status).toBe(429);
+    } finally {
+      clearInterval(limited.sweepInterval);
+    }
+  });
+
+  it('does not rate-limit /health', async () => {
+    const limited = createApp({ ...makeTestConfig(), rateLimitMax: 1, rateLimitWindowMs: 60_000 });
+    try {
+      for (let i = 0; i < 3; i++) {
+        expect((await request(limited.app).get('/health')).status).toBe(200);
+      }
+    } finally {
+      clearInterval(limited.sweepInterval);
+    }
+  });
+});
+
 // ─── MCP endpoint initialize (integration) ────────────────────────────────────
 
 const SKIP_MCP = !process.env.WEBUNTIS_SCHOOL;

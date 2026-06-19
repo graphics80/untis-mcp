@@ -34,8 +34,85 @@ export class UntisClient {
   private credentials: { school: string; username: string; password: string; baseUrl: string } | null = null;
   private loginPromise: Promise<void> | null = null;
 
+  // Reference data (teachers, classes, rooms, subjects, school years) barely changes
+  // within a school year but is re-read by nearly every tool — often several times
+  // per request. Cache it per session to collapse those redundant WebUntis round-trips;
+  // the TTL keeps a long-lived session eventually consistent.
+  private static readonly REFERENCE_TTL_MS = 60 * 60 * 1000; // 1h
+
+  // Per-call ceiling for any single WebUntis network request. A hung upstream would
+  // otherwise pin the request (and its session) until the HTTP server's own timeout;
+  // this caps each call so a stall fails fast and surfaces as a normal error. It bounds
+  // individual calls, not whole operations, so the legitimately many-call fan-out tools
+  // (getSchoolQuarters, getLessonsForSubject, …) are unaffected.
+  private static readonly CALL_TIMEOUT_MS = 20_000;
+
+  private cache = new Map<string, { value: unknown; expires: number }>();
+
   constructor(timezone: string = 'Europe/Vienna') {
     this.timezone = timezone;
+  }
+
+  // Reject `p` if it hasn't settled within `ms`. The timer is cleared on settle so no
+  // dangling handle keeps the process alive.
+  private static withTimeout<T>(p: Promise<T>, label: string, ms: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`WebUntis call timed out after ${ms}ms: ${label}`)),
+        ms,
+      );
+      p.then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+  }
+
+  // Wrap the raw WebUntis client so every async method call is timeout-bounded at one
+  // chokepoint — no per-call-site plumbing, and future methods are covered automatically.
+  private wrapWithTimeout(client: WebUntis): WebUntis {
+    const ms = UntisClient.CALL_TIMEOUT_MS;
+    // Memoize per method so a hot path (batchMap looping getTimetableFor) reuses one
+    // wrapper instead of allocating a fresh closure on every property access.
+    const wrappers = new Map<PropertyKey, unknown>();
+    return new Proxy(client, {
+      get(target, prop, receiver) {
+        const orig = Reflect.get(target, prop, receiver);
+        if (typeof orig !== 'function') return orig;
+        let wrapped = wrappers.get(prop);
+        if (!wrapped) {
+          wrapped = (...args: unknown[]) => {
+            const result = orig.apply(target, args);
+            return result instanceof Promise
+              ? UntisClient.withTimeout(result, String(prop), ms)
+              : result;
+          };
+          wrappers.set(prop, wrapped);
+        }
+        return wrapped;
+      },
+    });
+  }
+
+  // Memoize `fn` under `key` for REFERENCE_TTL_MS. Failures are never cached.
+  private async cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const hit = this.cache.get(key);
+    if (hit && hit.expires > now) return hit.value as T;
+    const value = await fn();
+    this.cache.set(key, { value, expires: now + UntisClient.REFERENCE_TTL_MS });
+    return value;
+  }
+
+  /** Drop all cached reference data. Called on logout; also resets state between tests. */
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  // School years, cached for the internal date-range/quarter resolution paths that
+  // re-resolve them on every call.
+  private async fetchSchoolyears(): Promise<any[]> {
+    return this.cached('schoolyears', async () => (await this.ensureClient().getSchoolyears()) || []);
   }
 
   async initialize(school: string, username: string, password: string, baseUrl: string): Promise<void> {
@@ -53,7 +130,7 @@ export class UntisClient {
     this.loginPromise = (async () => {
       try {
         const { school, username, password, baseUrl } = this.credentials!;
-        this.untis = new WebUntis(school, username, password, baseUrl);
+        this.untis = this.wrapWithTimeout(new WebUntis(school, username, password, baseUrl));
         await this.untis.login();
       } catch (error) {
         throw new Error(`Failed to authenticate with WebUntis: ${error}`);
@@ -172,14 +249,14 @@ export class UntisClient {
   }
 
   async getTeachers(): Promise<any[]> {
-    return this.withReconnect(async () => {
+    return this.cached('teachers', () => this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
         return await client.getTeachers() || [];
       } catch (error) {
         throw new Error(`Failed to fetch teachers: ${error}`);
       }
-    });
+    }));
   }
 
   async getTeachersForClass(classId: number, days: number = 30, schoolYearId?: number): Promise<Array<{ id: number; name: string; longName: string; title: string }>> {
@@ -211,26 +288,15 @@ export class UntisClient {
     });
   }
 
-  async getStudents(): Promise<any[]> {
-    return this.withReconnect(async () => {
-      const client = this.ensureClient();
-      try {
-        return await client.getStudents() || [];
-      } catch (error) {
-        throw new Error(`Failed to fetch students: ${error}`);
-      }
-    });
-  }
-
   async getClasses(schoolYearId?: number): Promise<any[]> {
-    return this.withReconnect(async () => {
+    return this.cached(`classes:${schoolYearId ?? 'current'}`, () => this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
         return await client.getClasses(true, schoolYearId as unknown as number) || [];
       } catch (error) {
         throw new Error(`Failed to fetch classes: ${error}`);
       }
-    });
+    }));
   }
 
   // Resolve a single class's linked companion classes (Partnerklassen) so the
@@ -263,37 +329,37 @@ export class UntisClient {
   }
 
   async getRooms(): Promise<any[]> {
-    return this.withReconnect(async () => {
+    return this.cached('rooms', () => this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
         return await client.getRooms() || [];
       } catch (error) {
         throw new Error(`Failed to fetch rooms: ${error}`);
       }
-    });
+    }));
   }
 
   async getSubjects(): Promise<any[]> {
-    return this.withReconnect(async () => {
+    return this.cached('subjects', () => this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
         return await client.getSubjects() || [];
       } catch (error) {
         throw new Error(`Failed to fetch subjects: ${error}`);
       }
-    });
+    }));
   }
 
   async getTeacherSubjects(days: number = 3, schoolYearId?: number): Promise<Record<string, string[]>> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        const teachers = await client.getTeachers() || [];
+        const teachers = await this.getTeachers();
         const subjectMap: Record<string, Set<string>> = {};
         teachers.forEach((teacher: any) => { subjectMap[teacher.name] = new Set(); });
 
         const { start: startDate, end: endDate } = await this.resolveDaysOrSchoolYear(days, schoolYearId);
-        const classes = await client.getClasses(true, schoolYearId as unknown as number) || [];
+        const classes = await this.getClasses(schoolYearId);
 
         await this.batchMap(classes, async (classItem: any) => {
           const timetable = await client.getTimetableForRange(startDate, endDate, classItem.id, WebUntisElementType.CLASS)
@@ -448,7 +514,7 @@ export class UntisClient {
     return this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        const rooms = await client.getRooms();
+        const rooms = await this.getRooms();
         const available = await this.batchMap(rooms, async (room: any) => {
           try {
             const timetable = await client.getTimetableFor(date, room.id, WebUntisElementType.ROOM);
@@ -619,8 +685,7 @@ export class UntisClient {
 
   // Find the school year whose date range contains the given date.
   private async resolveSchoolYear(date: Date): Promise<{ id: number; name: string } | null> {
-    const client = this.ensureClient();
-    const years = (await client.getSchoolyears()) || [];
+    const years = await this.fetchSchoolyears();
     const match = years.find((y: any) => y.startDate <= date && date <= y.endDate);
     return match ? { id: match.id, name: match.name } : null;
   }
@@ -628,8 +693,7 @@ export class UntisClient {
   // Find a school year by ID, or the one containing today if no ID given.
   // Returns the full year object (including startDate/endDate as Dates).
   private async findSchoolYear(schoolYearId?: number): Promise<any> {
-    const client = this.ensureClient();
-    const years = (await client.getSchoolyears()) || [];
+    const years = await this.fetchSchoolyears();
     if (schoolYearId) return years.find((y: any) => y.id === schoolYearId) ?? null;
     const now = new Date();
     return years.find((y: any) => y.startDate <= now && now <= y.endDate) ?? null;
@@ -683,8 +747,7 @@ export class UntisClient {
       const client = this.ensureClient();
       try {
         const schoolYear = await this.resolveYearForDate(date, schoolYearId);
-        const classes =
-          (await client.getClasses(true, schoolYear?.id as number)) || [];
+        const classes = await this.getClasses(schoolYear?.id);
 
         const withLessons = await this.batchMap(classes, async (klasse: any) => {
           try {
@@ -724,7 +787,7 @@ export class UntisClient {
         const schoolYear = await this.resolveYearForDate(date, schoolYearId);
 
         const [classes, rooms] = await Promise.all([
-          client.getClasses(true, schoolYear?.id as number).then(r => r || []),
+          this.getClasses(schoolYear?.id),
           this.getRooms(),
         ]);
 
@@ -855,7 +918,7 @@ export class UntisClient {
         if (!year) throw new Error(schoolYearId ? `School year ${schoolYearId} not found` : 'No school year found for today');
 
         const [classes, subjects] = await Promise.all([
-          client.getClasses(true, year.id).then((r: any) => r || []),
+          this.getClasses(year.id),
           this.getSubjects().catch(() => []),
         ]);
         const subjectTitle = this.buildSubjectTitleMap(subjects);
@@ -1032,11 +1095,10 @@ export class UntisClient {
       const client = this.ensureClient();
       try {
         const today = new Date();
-        const [year, allClassesRaw] = await Promise.all([
+        const [year, allClasses] = await Promise.all([
           this.findSchoolYear(schoolYearId),
-          client.getClasses(true, schoolYearId as unknown as number),
+          this.getClasses(schoolYearId),
         ]);
-        const allClasses: any[] = allClassesRaw || [];
         const rangeStart = startDate ?? (year ? year.startDate : today);
         const rangeEnd = endDate ?? (year ? year.endDate : today);
 
@@ -1141,7 +1203,7 @@ export class UntisClient {
         // Teachers, quarter detection, and subjects are independent — fetch in parallel.
         // Quarter detection is best-effort: if it fails, every lesson gets quarter=null.
         const [teachers, quartersResult, subjects] = await Promise.all([
-          client.getTeachers().then((r: any) => r || []),
+          this.getTeachers(),
           this.getSchoolQuarters(year.id, referenceClass).catch(() => null),
           this.getSubjects().catch(() => []),
         ]);
@@ -1234,6 +1296,7 @@ export class UntisClient {
   }
 
   async logout(): Promise<void> {
+    this.clearCache();
     if (this.untis) {
       try {
         await this.untis.logout();

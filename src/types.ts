@@ -33,13 +33,6 @@ export interface UntisRoom {
   building?: string;
 }
 
-export interface UntisStudent {
-  id: number;
-  firstName: string;
-  lastName: string;
-  key?: string;
-}
-
 export interface UntisAbsence {
   id: number;
   studentId: number;
@@ -108,15 +101,6 @@ export interface TimetableResponse {
     rooms: string[];
     cancelled: boolean;
     substitution: boolean;
-  }>;
-}
-
-export interface StudentResponse {
-  students: Array<{
-    id: number;
-    firstName: string;
-    lastName: string;
-    key: string;
   }>;
 }
 

@@ -34,25 +34,31 @@ bzz.webuntis.com
 
 ---
 
-## Tools (23 total)
+## Tools (29 total)
 
 | Tool | Description |
 |------|-------------|
 | `getTimetable` | Timetable for a class, teacher, or room over a date range |
 | `getWeekOverview` | Full week (Mon–Fri) timetable grouped by day |
+| `getYearlyTimetableForClass` | All lessons for a class across a full school year, split into four quarters |
 | `getTeachers` | All teachers |
 | `getClasses` | All classes |
 | `getClassesOnDay` | All classes that have school on a specific date (with lesson count) |
+| `getClassesAtLocationOnDay` | All classes with a lesson at a given location/campus on a date (with lesson count and rooms) |
 | `classOnWeekDay` | All classes that have school on a given weekday (German name or 1–7) |
+| `getCompanionClasses` | A class's linked companion classes (Partnerklassen) with a merged `fetchIds` array; flags the IA BM/ABU choice when ambiguous |
 | `getRooms` | All rooms |
-| `getStudents` | All students |
 | `getSubjectsList` | All subjects offered |
+| `getLessonsForSubject` | All scheduled lessons for a subject (optionally one class) over a date range, grouped by date and class |
 | `getTimegrid` | Lesson periods (start/end times per weekday) |
 | `getHolidays` | School holidays and vacation periods |
 | `getDepartments` | School departments |
 | `getSchoolYear` | Current and all available school years |
+| `getSchoolQuarters` | The school year's four quarters (Quartale) with date ranges, inferred from module changes |
+| `getSemesters` | The school year's two semesters with the semester-change date |
 | `getTeacherSubjects` | Which subjects each teacher teaches (scans timetable history) |
 | `getTeachersForClass` | All teachers who teach a specific class (scans recent timetable) |
+| `getTeacherSchedule` | A teacher's full-year schedule as blocks (quarter, subject, class, weekday, time, half-day) |
 | `findSubstituteTeachers` | Teachers qualified for a subject AND free at a given time slot |
 | `checkTeacherAvailability` | Whether a teacher is free at a specific time, and what they're teaching if not |
 | `findAvailableRooms` | All rooms free at a given date and time slot |
@@ -76,6 +82,8 @@ bzz.webuntis.com
 | `BASE_URL` | Yes | Public HTTPS URL of this server (no trailing slash) |
 | `PORT` | No | HTTP port (default: `3000`) |
 | `SCHOOL_TIMEZONE` | No | IANA timezone (default: `Europe/Zurich`) |
+| `RATE_LIMIT_WINDOW_MS` | No | Rate-limit window for the MCP endpoint in ms (default: `60000`) |
+| `RATE_LIMIT_MAX` | No | Max requests per window per client (default: `120`) |
 
 See `.env.production.example` for a template.
 

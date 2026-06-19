@@ -46,7 +46,11 @@ export function createMcpStack(
   );
 
   registerHandlers(server, untisClient, emailDomain);
-  server.connect(transport);
+  // connect() is fire-and-forget here (the transport is driven per-request), so a
+  // rejection would otherwise surface as an unhandledRejection — log it instead.
+  server.connect(transport).catch((err) => {
+    process.stderr.write(`MCP transport connect failed: ${err}\n`);
+  });
 
   return { server, transport };
 }

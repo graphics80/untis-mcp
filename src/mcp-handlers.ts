@@ -5,7 +5,6 @@ import { TOOLS, toolSchemas } from './schemas.js';
 import { parseWeekday, dateForWeekdayInWeek, toISODate, formatHm, WEEKDAY_NAMES_ISO } from './weekday.js';
 import {
   TimetableResponse,
-  StudentResponse,
   TeacherResponse,
   ClassResponse,
   RoomResponse,
@@ -48,11 +47,6 @@ const TOOL_LIST = [
         {
           name: TOOLS.GET_ROOMS,
           description: 'Get all rooms',
-          inputSchema: { type: 'object', properties: {}, required: [] },
-        },
-        {
-          name: TOOLS.GET_STUDENTS,
-          description: 'Get all students',
           inputSchema: { type: 'object', properties: {}, required: [] },
         },
         {
@@ -360,7 +354,7 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
       }
 
       const validatedArgs = schema.parse(args);
-      let result: TimetableResponse | StudentResponse | TeacherResponse | ClassResponse | RoomResponse | object;
+      let result: TimetableResponse | TeacherResponse | ClassResponse | RoomResponse | object;
 
       switch (name) {
         case TOOLS.GET_TIMETABLE: {
@@ -434,19 +428,6 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
               id: room.id,
               name: room.name,
               building: room.building || '',
-            })),
-          };
-          break;
-        }
-
-        case TOOLS.GET_STUDENTS: {
-          const students = await untisClient.getStudents();
-          result = {
-            students: students.map((student) => ({
-              id: student.id,
-              firstName: student.firstName,
-              lastName: student.lastName,
-              key: student.key || '',
             })),
           };
           break;

@@ -31,12 +31,11 @@ describe('getTimetable', () => {
   });
 });
 
-describe('getTeachers / getClasses / getRooms / getStudents / getTimegrid / getHolidays / getDepartments / getSchoolYear', () => {
+describe('getTeachers / getClasses / getRooms / getTimegrid / getHolidays / getDepartments / getSchoolYear', () => {
   const noParamTools = [
     TOOLS.GET_TEACHERS,
     TOOLS.GET_CLASSES,
     TOOLS.GET_ROOMS,
-    TOOLS.GET_STUDENTS,
     TOOLS.GET_TIMEGRID,
     TOOLS.GET_HOLIDAYS,
     TOOLS.GET_DEPARTMENTS,
