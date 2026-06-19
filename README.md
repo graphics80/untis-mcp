@@ -83,6 +83,7 @@ bzz.webuntis.com
 | `BASE_URL` | Yes | Public HTTPS URL of this server (no trailing slash) |
 | `PORT` | No | HTTP port (default: `3000`) |
 | `SCHOOL_TIMEZONE` | No | IANA timezone (default: `Europe/Zurich`) |
+| `SCHOOL_EMAIL_DOMAIN` | No | Domain for deriving teacher emails as `firstname.lastname@domain` (e.g. `bzz.ch`). If unset, the `email` field is omitted |
 | `RATE_LIMIT_WINDOW_MS` | No | Rate-limit window for the MCP endpoint in ms (default: `60000`) |
 | `RATE_LIMIT_MAX` | No | Max requests per window per client (default: `120`) |
 
