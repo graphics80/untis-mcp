@@ -49,7 +49,7 @@ export interface AppConfig {
   emailDomain?: string;
   /** Rate-limit window in ms (default 60_000). */
   rateLimitWindowMs?: number;
-  /** Max requests to the MCP endpoint per window per client (default 120). */
+  /** Max requests to the MCP endpoint per window per client (default 1000). */
   rateLimitMax?: number;
 }
 
@@ -67,7 +67,7 @@ export function createApp(config: AppConfig): {
     timezone = 'Europe/Zurich',
     emailDomain,
     rateLimitWindowMs = 60_000,
-    rateLimitMax = 120,
+    rateLimitMax = 1000,
   } = config;
 
   const MCP_PATH = '/untis';
