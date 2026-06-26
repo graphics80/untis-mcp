@@ -501,6 +501,86 @@ describe('getClassesAtLocationOnDay', () => {
   });
 });
 
+// ─── getTeachersByLocation ────────────────────────────────────────────────────
+
+describe('getTeachersByLocation', () => {
+  const SCHOOL_YEARS = [
+    { id: 1, name: '2025/26', startDate: new Date('2025-09-01'), endDate: new Date('2026-06-30') },
+  ];
+  const TEACHERS = [
+    { id: 1, name: 'MUS', longName: 'Mustermann', title: '' },
+    { id: 2, name: 'HUB', longName: 'Huber', title: '' },
+  ];
+  // Location is the room-name first letter: S→Stäfa, H→Horgen, O→Oberdorf.
+  // ExtA has no campus letter → excluded.
+  const ROOMS = [
+    { id: 200, name: 'S1', longName: 'Saal 1' },
+    { id: 100, name: 'H200', longName: 'Zimmer 200' },
+    { id: 300, name: 'O5', longName: 'Oberdorf 5' },
+    { id: 400, name: 'ExtA', longName: 'externer Auftrag' },
+  ];
+  const lessonInRoom = (room: object, overrides: object = {}) => makeLesson({ ro: [room], ...overrides });
+
+  beforeEach(() => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getTeachers.mockResolvedValue(TEACHERS);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+  });
+
+  it('classifies teachers by campus from room-name prefix', async () => {
+    mockInstance.getTimetableForRange
+      .mockResolvedValueOnce([lessonInRoom({ id: 200, name: 'S1' }), lessonInRoom({ id: 100, name: 'H200' })]) // MUS: Stäfa + Horgen
+      .mockResolvedValueOnce([lessonInRoom({ id: 200, name: 'S1' }), lessonInRoom({ id: 200, name: 'S1' })]);   // HUB: Stäfa only
+    const client = await makeClient();
+    const result = await client.getTeachersByLocation(undefined, undefined, 1);
+
+    expect(result.schoolYear).toEqual({ id: 1, name: '2025/26' });
+    expect(result.range).toEqual({ start: '2025-09-01', end: '2026-06-30' });
+    expect(result.locations).toEqual(['Horgen', 'Stäfa']);
+    expect(result.byLocation).toEqual({ Horgen: ['MUS'], Stäfa: ['HUB', 'MUS'] });
+
+    const mus = result.teachers.find((t) => t.name === 'MUS')!;
+    expect(mus.locations).toEqual(['Horgen', 'Stäfa']);
+    expect(mus.lessonsByLocation).toEqual({ Horgen: 1, Stäfa: 1 });
+    const hub = result.teachers.find((t) => t.name === 'HUB')!;
+    expect(hub.locations).toEqual(['Stäfa']);
+    expect(hub.totalLessons).toBe(2);
+  });
+
+  it('excludes cancelled lessons and teachers with no lessons', async () => {
+    mockInstance.getTimetableForRange
+      .mockResolvedValueOnce([lessonInRoom({ id: 100, name: 'H200' }, { code: 'cancelled' })]) // MUS: only cancelled → dropped
+      .mockResolvedValueOnce([lessonInRoom({ id: 300, name: 'O5' })]);                          // HUB: Oberdorf
+    const client = await makeClient();
+    const result = await client.getTeachersByLocation(undefined, undefined, 1);
+
+    expect(result.teachers.map((t) => t.name)).toEqual(['HUB']);
+    expect(result.byLocation).toEqual({ Oberdorf: ['HUB'] });
+  });
+
+  it('excludes non-campus rooms (no known prefix) from locations', async () => {
+    mockInstance.getTimetableForRange
+      .mockResolvedValueOnce([lessonInRoom({ id: 200, name: 'S1' }), lessonInRoom({ id: 400, name: 'ExtA' })]) // MUS: Stäfa + external → only Stäfa
+      .mockResolvedValueOnce([lessonInRoom({ id: 400, name: 'ExtA' })]);                                        // HUB: only external → dropped
+    const client = await makeClient();
+    const result = await client.getTeachersByLocation(undefined, undefined, 1);
+
+    expect(result.teachers.map((t) => t.name)).toEqual(['MUS']);
+    expect(result.teachers[0]).toMatchObject({ locations: ['Stäfa'], lessonsByLocation: { Stäfa: 1 }, totalLessons: 1 });
+    expect(result.byLocation).toEqual({ Stäfa: ['MUS'] });
+  });
+
+  it('tolerates a per-teacher timetable error (skips that teacher)', async () => {
+    mockInstance.getTimetableForRange
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([lessonInRoom({ id: 200, name: 'S1' })]);
+    const client = await makeClient();
+    const result = await client.getTeachersByLocation(undefined, undefined, 1);
+
+    expect(result.teachers.map((t) => t.name)).toEqual(['HUB']);
+  });
+});
+
 // ─── getSchoolQuarters / getSemesters ─────────────────────────────────────────
 
 describe('getSchoolQuarters', () => {

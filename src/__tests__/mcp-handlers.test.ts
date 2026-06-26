@@ -212,9 +212,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 30 tools', async () => {
+  it('returns all 31 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(30);
+    expect(tools).toHaveLength(31);
     const names = tools.map(t => t.name);
     expect(names).not.toContain('getStudents');
     expect(names).toContain('getTeachers');
@@ -223,6 +223,7 @@ describe('tools/list', () => {
     expect(names).toContain('getTeacherSchedule');
     expect(names).toContain('getCompanionClasses');
     expect(names).toContain('getClassLeadership');
+    expect(names).toContain('getTeachersByLocation');
   });
 });
 

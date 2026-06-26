@@ -922,6 +922,116 @@ export class UntisClient {
     });
   }
 
+  // Campus a room belongs to, derived from the FIRST LETTER of its name:
+  // S→Stäfa, H→Horgen, O→Oberdorf. This naming convention is the reliable
+  // location signal (the WebUntis `building` field is often unset). Rooms whose
+  // name does not start with a known campus letter (external assignments like
+  // "ExtA", placeholder rooms) return '' and are excluded — they are not a
+  // campus, so they must not pollute the campus buckets or break the
+  // "only Stäfa" vs "Stäfa AND Horgen" classification.
+  private static readonly LOCATION_BY_ROOM_PREFIX: Record<string, string> = {
+    S: 'Stäfa', H: 'Horgen', O: 'Oberdorf',
+  };
+  private static roomLocation(name: string): string {
+    const first = (name || '').trim().charAt(0).toUpperCase();
+    return UntisClient.LOCATION_BY_ROOM_PREFIX[first] ?? '';
+  }
+
+  // Classify every teacher by the campus(es) they actually teach at over a date
+  // range. Location is derived per lesson from its rooms' name prefix (see
+  // roomLocation), since Untis has no direct teacher→location link. Default
+  // range is the whole school year (the given schoolYearId, else the current
+  // year); explicit startDate/endDate override it. Per-teacher timetable fetches
+  // are throttled via batchMap. Each teacher carries the full set of locations
+  // they teach at, so callers derive "only Stäfa" (locations === ['Stäfa']) vs
+  // "Stäfa AND Horgen" (locations includes both) themselves.
+  async getTeachersByLocation(startDate?: Date, endDate?: Date, schoolYearId?: number): Promise<{
+    schoolYear: { id: number; name: string } | null;
+    range: { start: string; end: string };
+    locations: string[];
+    byLocation: Record<string, string[]>;
+    teachers: Array<{
+      id: number; name: string; longName: string;
+      locations: string[];
+      lessonsByLocation: Record<string, number>;
+      totalLessons: number;
+    }>;
+  }> {
+    return this.withReconnect(async () => {
+      const client = this.ensureClient();
+      try {
+        let start: Date;
+        let end: Date;
+        let schoolYear: { id: number; name: string } | null;
+        if (!startDate || !endDate) {
+          const year = await this.findSchoolYear(schoolYearId);
+          if (!year) throw new Error(schoolYearId ? `School year ${schoolYearId} not found` : 'No current school year found');
+          start = startDate ?? year.startDate;
+          end = endDate ?? year.endDate;
+          schoolYear = { id: year.id, name: year.name };
+        } else {
+          start = startDate;
+          end = endDate;
+          schoolYear = await this.resolveYearForDate(start, schoolYearId);
+        }
+
+        const [teachers, rooms] = await Promise.all([
+          this.getTeachers(),
+          this.getRooms(),
+        ]);
+        // room id → canonical name, so a lesson's room (which carries id + name)
+        // resolves consistently even if the embedded name differs.
+        const nameById = new Map<number, string>(rooms.map((r: any) => [r.id, r.name || '']));
+
+        const enriched = await this.batchMap(teachers, async (t: any) => {
+          try {
+            const lessons = (await client.getTimetableForRange(start, end, t.id, WebUntisElementType.TEACHER)) || [];
+            const counts = new Map<string, number>();
+            for (const lesson of lessons) {
+              if (lesson.code === 'cancelled') continue;
+              const locs = new Set<string>();
+              for (const lr of (lesson.ro as any[]) || []) {
+                const loc = UntisClient.roomLocation(nameById.get(lr.id) ?? lr.name ?? '');
+                if (loc) locs.add(loc);
+              }
+              for (const loc of locs) counts.set(loc, (counts.get(loc) || 0) + 1);
+            }
+            if (counts.size === 0) return null;
+            const locations = [...counts.keys()].sort();
+            const lessonsByLocation: Record<string, number> = {};
+            let totalLessons = 0;
+            for (const loc of locations) {
+              const c = counts.get(loc)!;
+              lessonsByLocation[loc] = c;
+              totalLessons += c;
+            }
+            return { id: t.id, name: t.name, longName: t.longName || '', locations, lessonsByLocation, totalLessons };
+          } catch {
+            return null;
+          }
+        });
+
+        enriched.sort((a, b) => a.name.localeCompare(b.name));
+
+        const byLocation: Record<string, string[]> = {};
+        for (const t of enriched) {
+          for (const loc of t.locations) (byLocation[loc] ??= []).push(t.name);
+        }
+        for (const loc of Object.keys(byLocation)) byLocation[loc].sort((a, b) => a.localeCompare(b));
+
+        return {
+          schoolYear,
+          range: { start: toISODate(start), end: toISODate(end) },
+          locations: Object.keys(byLocation).sort(),
+          byLocation,
+          teachers: enriched,
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch teachers by location: ${error}`);
+      }
+    });
+  }
+
   // A "module" subject carries a digit in its name (BZZ module codes like "165",
   // "M323"); recurring non-module periods (Klassenstunde "Inf", "Spo_bili") do not.
   // Filtering to modules makes the quarter signal clean.

@@ -31,6 +31,7 @@ export const TOOLS = {
   GET_TEACHER_SCHEDULE: 'getTeacherSchedule',
   GET_COMPANION_CLASSES: 'getCompanionClasses',
   GET_CLASS_LEADERSHIP: 'getClassLeadership',
+  GET_TEACHERS_BY_LOCATION: 'getTeachersByLocation',
 } as const;
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format');
@@ -168,4 +169,9 @@ export const toolSchemas = {
     classId: z.number().int().positive().optional(),
     schoolYearId: schoolYearIdField,
   }).refine((d) => !!d.className || !!d.classId, { message: 'Provide either className or classId' }),
+  [TOOLS.GET_TEACHERS_BY_LOCATION]: z.object({
+    startDate: dateSchema.optional(),
+    endDate: dateSchema.optional(),
+    schoolYearId: schoolYearIdField,
+  }).refine((d) => !!d.startDate === !!d.endDate, { message: 'Provide startDate and endDate together, or neither' }),
 };

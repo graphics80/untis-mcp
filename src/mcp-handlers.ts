@@ -349,6 +349,19 @@ const TOOL_LIST = [
             required: [],
           },
         },
+        {
+          name: TOOLS.GET_TEACHERS_BY_LOCATION,
+          description: `Classify teachers by the campus(es) they teach at over a date range. Location is derived from each lesson's room name prefix: S→Stäfa, H→Horgen, O→Oberdorf (the WebUntis building field is unreliable). Returns each teacher with the full set of locations they teach at, plus a byLocation map (location → teacher short names). Derive "teaches ONLY in Stäfa" as locations === ["Stäfa"], and "teaches in Stäfa AND Horgen" as locations containing both. Default range is the whole school year (schoolYearId, else current year); pass startDate+endDate to narrow it. Scans every teacher's timetable, so it can be slow. ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              startDate: { type: 'string', description: 'Range start (YYYY-MM-DD, optional; defaults to school year start)' },
+              endDate: { type: 'string', description: 'Range end (YYYY-MM-DD, optional; defaults to school year end)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year).' },
+            },
+            required: [],
+          },
+        },
 ];
 
 // Build the optional `{ email }` part of a teacher object. Spread into the
@@ -799,6 +812,21 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
             departmentHead: head && head.resolved
               ? { ...head, ...emailField(emailDomain, head.longName) }
               : head,
+          };
+          break;
+        }
+
+        case TOOLS.GET_TEACHERS_BY_LOCATION: {
+          const tlArgs = validatedArgs as any;
+          const data = await untisClient.getTeachersByLocation(
+            tlArgs.startDate ? new Date(tlArgs.startDate) : undefined,
+            tlArgs.endDate ? new Date(tlArgs.endDate) : undefined,
+            tlArgs.schoolYearId,
+          );
+          result = {
+            ...data,
+            teachers: data.teachers.map((t) => ({ ...t, ...emailField(emailDomain, t.longName) })),
+            count: data.teachers.length,
           };
           break;
         }
