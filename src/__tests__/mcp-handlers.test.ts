@@ -170,6 +170,16 @@ class StubUntisClient extends UntisClient {
     };
   }
 
+  override async getTeachersForRoom(_roomRef: number | string, _startDate?: Date, _endDate?: Date, _schoolYearId?: number) {
+    return {
+      room: { id: 20, name: 'A01', longName: 'Raum A01', building: 'A' },
+      schoolYear: { id: 1, name: '2025/26' },
+      range: { start: '2025-09-01', end: '2026-06-30' },
+      teachers: [{ id: 1, name: 'MUS', longName: 'Mustermann Max', title: 'Mag.', lessonCount: 3 }],
+      count: 1,
+    };
+  }
+
   override async getClassLeadership(classRef: number | string, _schoolYearId?: number) {
     if (classRef === 'NOPE') {
       return { class: null, classFound: false, classTeachers: [], departmentHead: null };
@@ -212,9 +222,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 31 tools', async () => {
+  it('returns all 32 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(31);
+    expect(tools).toHaveLength(32);
     const names = tools.map(t => t.name);
     expect(names).not.toContain('getStudents');
     expect(names).toContain('getTeachers');
@@ -224,6 +234,7 @@ describe('tools/list', () => {
     expect(names).toContain('getCompanionClasses');
     expect(names).toContain('getClassLeadership');
     expect(names).toContain('getTeachersByLocation');
+    expect(names).toContain('getTeachersForRoom');
   });
 });
 
@@ -636,6 +647,25 @@ describe('getClassLeadership', () => {
 
   it('rejects calls without className or classId', async () => {
     const result = await client.callTool({ name: 'getClassLeadership', arguments: {} });
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe('getTeachersForRoom', () => {
+  it('returns teachers with lesson counts and derived emails for a room', async () => {
+    const data = await callTool('getTeachersForRoom', { roomName: 'A01' });
+    expect(data.room).toMatchObject({ id: 20, name: 'A01' });
+    expect(data.count).toBe(1);
+    expect(data.teachers[0]).toMatchObject({ name: 'MUS', lessonCount: 3, email: 'max.mustermann@bzz.ch' });
+  });
+
+  it('accepts roomId as an alternative to roomName', async () => {
+    const data = await callTool('getTeachersForRoom', { roomId: 20 });
+    expect(data.room.id).toBe(20);
+  });
+
+  it('rejects calls without roomId or roomName', async () => {
+    const result = await client.callTool({ name: 'getTeachersForRoom', arguments: {} });
     expect(result.isError).toBe(true);
   });
 });

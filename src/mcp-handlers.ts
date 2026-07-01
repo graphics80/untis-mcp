@@ -362,6 +362,21 @@ const TOOL_LIST = [
             required: [],
           },
         },
+        {
+          name: TOOLS.GET_TEACHERS_FOR_ROOM,
+          description: `Get all teachers who teach in a specific room over a date range, each with their lesson count in that room, sorted by lesson count. Identify the room by roomId or roomName (name is matched exactly first, then as a substring on name/longName — e.g. "S1.05"). Default range is the whole school year (schoolYearId, else current year); pass startDate+endDate to narrow it. ${SCHOOL_YEAR_HINT}`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              roomId: { type: 'number', description: 'Room ID (provide this or roomName). Use getRooms to find IDs.' },
+              roomName: { type: 'string', description: 'Room name or partial name (e.g. "S1.05"), provide this or roomId' },
+              startDate: { type: 'string', description: 'Range start (YYYY-MM-DD, optional; defaults to school year start)' },
+              endDate: { type: 'string', description: 'Range end (YYYY-MM-DD, optional; defaults to school year end)' },
+              schoolYearId: { type: 'number', description: 'School year ID (optional, defaults to current year).' },
+            },
+            required: [],
+          },
+        },
 ];
 
 // Build the optional `{ email }` part of a teacher object. Spread into the
@@ -827,6 +842,21 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
             ...data,
             teachers: data.teachers.map((t) => ({ ...t, ...emailField(emailDomain, t.longName) })),
             count: data.teachers.length,
+          };
+          break;
+        }
+
+        case TOOLS.GET_TEACHERS_FOR_ROOM: {
+          const trArgs = validatedArgs as any;
+          const data = await untisClient.getTeachersForRoom(
+            trArgs.roomId ?? trArgs.roomName,
+            trArgs.startDate ? new Date(trArgs.startDate) : undefined,
+            trArgs.endDate ? new Date(trArgs.endDate) : undefined,
+            trArgs.schoolYearId,
+          );
+          result = {
+            ...data,
+            teachers: data.teachers.map((t) => ({ ...t, ...emailField(emailDomain, t.longName) })),
           };
           break;
         }

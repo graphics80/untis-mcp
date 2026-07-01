@@ -1032,6 +1032,78 @@ export class UntisClient {
     });
   }
 
+  // All teachers who teach in a given room over a date range, each with the
+  // number of (non-cancelled) lessons they hold there. The room is resolved by
+  // id or by name (exact normalized match first, then substring on name/longName).
+  // Default range is the whole school year (schoolYearId, else current year);
+  // pass startDate+endDate to narrow it. One timetable fetch for the room, so
+  // it is cheap even over a full year — teachers are read from each lesson's `te`.
+  async getTeachersForRoom(roomRef: number | string, startDate?: Date, endDate?: Date, schoolYearId?: number): Promise<{
+    room: { id: number; name: string; longName: string; building: string } | null;
+    schoolYear: { id: number; name: string } | null;
+    range: { start: string; end: string };
+    teachers: Array<{ id: number; name: string; longName: string; title: string; lessonCount: number }>;
+    count: number;
+  }> {
+    return this.withReconnect(async () => {
+      try {
+        let start: Date;
+        let end: Date;
+        let schoolYear: { id: number; name: string } | null;
+        if (!startDate || !endDate) {
+          const year = await this.findSchoolYear(schoolYearId);
+          if (!year) throw new Error(schoolYearId ? `School year ${schoolYearId} not found` : 'No current school year found');
+          start = startDate ?? year.startDate;
+          end = endDate ?? year.endDate;
+          schoolYear = { id: year.id, name: year.name };
+        } else {
+          start = startDate;
+          end = endDate;
+          schoolYear = await this.resolveYearForDate(start, schoolYearId);
+        }
+
+        const [rooms, allTeachers] = await Promise.all([this.getRooms(), this.getTeachers()]);
+        const longOf = (r: any) => r.longName || r.longname || '';
+        let room: any;
+        if (typeof roomRef === 'number') {
+          room = rooms.find((r: any) => r.id === roomRef);
+        } else {
+          const nq = normalizeToken(roomRef);
+          room = rooms.find((r: any) => normalizeToken(r.name || '') === nq)
+            ?? rooms.find((r: any) => normalizeToken(r.name || '').includes(nq) || normalizeToken(longOf(r)).includes(nq));
+        }
+        if (!room) throw new Error(`Room not found: ${roomRef}`);
+
+        const lessons = await this.getTimetableForRoom(room.id, start, end);
+        const counts = new Map<string, number>();
+        for (const lesson of lessons) {
+          if (lesson.code === 'cancelled') continue;
+          for (const t of (lesson.te as any[]) || []) counts.set(t.name, (counts.get(t.name) || 0) + 1);
+        }
+
+        const teacherMap = new Map(allTeachers.map((t: any) => [t.name, t]));
+        const teachers = [...counts.entries()]
+          .map(([name, lessonCount]) => {
+            const t = teacherMap.get(name) as any;
+            return t
+              ? { id: t.id, name: t.name, longName: t.longName || '', title: t.title || '', lessonCount }
+              : { id: 0, name, longName: '', title: '', lessonCount };
+          })
+          .sort((a, b) => b.lessonCount - a.lessonCount || a.name.localeCompare(b.name));
+
+        return {
+          room: { id: room.id, name: room.name, longName: longOf(room), building: room.building || '' },
+          schoolYear,
+          range: { start: toISODate(start), end: toISODate(end) },
+          teachers,
+          count: teachers.length,
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch teachers for room: ${error}`);
+      }
+    });
+  }
+
   // A "module" subject carries a digit in its name (BZZ module codes like "165",
   // "M323"); recurring non-module periods (Klassenstunde "Inf", "Spo_bili") do not.
   // Filtering to modules makes the quarter signal clean.

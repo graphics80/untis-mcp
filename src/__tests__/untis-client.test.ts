@@ -581,6 +581,68 @@ describe('getTeachersByLocation', () => {
   });
 });
 
+// ─── getTeachersForRoom ───────────────────────────────────────────────────────
+
+describe('getTeachersForRoom', () => {
+  const SCHOOL_YEARS = [
+    { id: 1, name: '2025/26', startDate: new Date('2025-09-01'), endDate: new Date('2026-06-30') },
+  ];
+  const TEACHERS = [
+    { id: 1, name: 'MUS', longName: 'Mustermann', title: 'Mag.' },
+    { id: 2, name: 'HUB', longName: 'Huber', title: '' },
+  ];
+  const ROOMS = [
+    { id: 100, name: 'S1.05', longName: 'Saal 1.05', building: 'ST' },
+    { id: 200, name: 'H200', longName: 'Zimmer 200', building: 'HO' },
+  ];
+  const lessonBy = (teacher: string, overrides: object = {}) => makeLesson({ te: [{ name: teacher }], ...overrides });
+
+  beforeEach(() => {
+    mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
+    mockInstance.getTeachers.mockResolvedValue(TEACHERS);
+    mockInstance.getRooms.mockResolvedValue(ROOMS);
+  });
+
+  it('tallies teachers by lesson count for a room resolved by name', async () => {
+    mockInstance.getTimetableForRange.mockResolvedValue([
+      lessonBy('MUS'), lessonBy('MUS'), lessonBy('HUB'),
+    ]);
+    const client = await makeClient();
+    const result = await client.getTeachersForRoom('S1.05', undefined, undefined, 1);
+
+    expect(mockInstance.getTimetableForRange).toHaveBeenCalledWith(
+      new Date('2025-09-01'), new Date('2026-06-30'), 100, 4,
+    );
+    expect(result.room).toEqual({ id: 100, name: 'S1.05', longName: 'Saal 1.05', building: 'ST' });
+    expect(result.schoolYear).toEqual({ id: 1, name: '2025/26' });
+    expect(result.range).toEqual({ start: '2025-09-01', end: '2026-06-30' });
+    // Sorted by lesson count desc.
+    expect(result.teachers).toEqual([
+      { id: 1, name: 'MUS', longName: 'Mustermann', title: 'Mag.', lessonCount: 2 },
+      { id: 2, name: 'HUB', longName: 'Huber', title: '', lessonCount: 1 },
+    ]);
+    expect(result.count).toBe(2);
+  });
+
+  it('resolves the room by id and excludes cancelled lessons', async () => {
+    mockInstance.getTimetableForRange.mockResolvedValue([
+      lessonBy('MUS'), lessonBy('HUB', { code: 'cancelled' }),
+    ]);
+    const client = await makeClient();
+    const result = await client.getTeachersForRoom(200, undefined, undefined, 1);
+
+    expect(mockInstance.getTimetableForRange).toHaveBeenCalledWith(
+      new Date('2025-09-01'), new Date('2026-06-30'), 200, 4,
+    );
+    expect(result.teachers.map((t) => t.name)).toEqual(['MUS']);
+  });
+
+  it('throws when the room name matches nothing', async () => {
+    const client = await makeClient();
+    await expect(client.getTeachersForRoom('ZZZ', undefined, undefined, 1)).rejects.toThrow(/Room not found/);
+  });
+});
+
 // ─── getSchoolQuarters / getSemesters ─────────────────────────────────────────
 
 describe('getSchoolQuarters', () => {
