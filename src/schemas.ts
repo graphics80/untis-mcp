@@ -19,6 +19,7 @@ export const TOOLS = {
   GET_EXAMS: 'getExams',
   GET_HOMEWORK: 'getHomework',
   GET_SCHOOL_YEAR: 'getSchoolYear',
+  GET_CURRENT_DATETIME: 'getCurrentDateTime',
   GET_NEWS: 'getNews',
   GET_TEACHERS_FOR_CLASS: 'getTeachersForClass',
   GET_CLASSES_ON_DAY: 'getClassesOnDay',
@@ -105,6 +106,7 @@ export const toolSchemas = {
     schoolYearId: schoolYearIdField,
   }).refine(datesOrSchoolYear, { message: datesOrSchoolYearMsg }),
   [TOOLS.GET_SCHOOL_YEAR]: z.object({}),
+  [TOOLS.GET_CURRENT_DATETIME]: z.object({}),
   [TOOLS.GET_NEWS]: z.object({
     date: dateSchema.optional(),
   }),

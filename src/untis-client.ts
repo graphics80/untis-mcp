@@ -234,6 +234,42 @@ export class UntisClient {
     return `${match[1]}${match[2].padStart(2, '0')}:${match[3] ?? '00'}`;
   }
 
+  // Current wall-clock date/time at the school, resolved through this.timezone (DST-aware).
+  // Pure/local: no WebUntis round-trip. Uses en-CA formatting so the date part is already
+  // YYYY-MM-DD and the time part 24-hour HH:MM:SS.
+  getCurrentDateTime(): {
+    timezone: string;
+    utcOffset: string;
+    date: string;
+    time: string;
+    weekday: string;
+    isoWeekday: number;
+    isoDateTime: string;
+  } {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: this.timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).formatToParts(now);
+    const get = (t: string) => parts.find(p => p.type === t)?.value ?? '';
+    const date = `${get('year')}-${get('month')}-${get('day')}`;
+    // hour can come back as "24" at midnight under some engines — normalize to "00".
+    const hour = get('hour') === '24' ? '00' : get('hour');
+    const time = `${hour}:${get('minute')}:${get('second')}`;
+    const isoWeekday = isoWeekdayFromISODate(date);
+    const utcOffset = this.tzOffset(now);
+    return {
+      timezone: this.timezone,
+      utcOffset,
+      date,
+      time,
+      weekday: WEEKDAY_NAMES_ISO[isoWeekday],
+      isoWeekday,
+      isoDateTime: `${date}T${time}${utcOffset}`,
+    };
+  }
+
   private async fetchTimetable(elementId: number, elementType: WebUntisElementType, startDate?: Date, endDate?: Date): Promise<any[]> {
     return this.withReconnect(async () => {
       const client = this.ensureClient();

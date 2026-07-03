@@ -222,9 +222,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 32 tools', async () => {
+  it('returns all 33 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(32);
+    expect(tools).toHaveLength(33);
     const names = tools.map(t => t.name);
     expect(names).not.toContain('getStudents');
     expect(names).toContain('getTeachers');
@@ -235,6 +235,7 @@ describe('tools/list', () => {
     expect(names).toContain('getClassLeadership');
     expect(names).toContain('getTeachersByLocation');
     expect(names).toContain('getTeachersForRoom');
+    expect(names).toContain('getCurrentDateTime');
   });
 });
 
@@ -253,6 +254,20 @@ describe('getTeachers', () => {
     expect(data.teachers).toHaveLength(1);
     expect(data.teachers[0].name).toBe('MUS');
     expect(data.teachers[0].email).toBe('max.mustermann@bzz.ch');
+  });
+});
+
+describe('getCurrentDateTime', () => {
+  it('returns date/time in the school timezone', async () => {
+    const data = await callTool('getCurrentDateTime', {});
+    expect(data.timezone).toBe('Europe/Zurich');
+    expect(data.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(data.time).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(data.isoWeekday).toBeGreaterThanOrEqual(1);
+    expect(data.isoWeekday).toBeLessThanOrEqual(7);
+    expect(data.weekday).toBeTruthy();
+    expect(data.utcOffset).toMatch(/^[+-]\d{2}:\d{2}$/);
+    expect(data.isoDateTime).toBe(`${data.date}T${data.time}${data.utcOffset}`);
   });
 });
 

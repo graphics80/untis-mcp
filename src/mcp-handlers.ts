@@ -181,6 +181,11 @@ const TOOL_LIST = [
           inputSchema: { type: 'object', properties: {}, required: [] },
         },
         {
+          name: TOOLS.GET_CURRENT_DATETIME,
+          description: "Get the current date and time in the school's timezone. Returns date (YYYY-MM-DD), time (HH:MM:SS), German weekday, ISO weekday (1=Montag), timezone and UTC offset. Use this to resolve \"today\", \"now\", \"this week\" before calling date-based tools.",
+          inputSchema: { type: 'object', properties: {}, required: [] },
+        },
+        {
           name: TOOLS.GET_NEWS,
           description: 'Get the news/messages of the day from the WebUntis news widget',
           inputSchema: {
@@ -591,6 +596,11 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
               endDate: y.endDate,
             })),
           };
+          break;
+        }
+
+        case TOOLS.GET_CURRENT_DATETIME: {
+          result = untisClient.getCurrentDateTime();
           break;
         }
 
