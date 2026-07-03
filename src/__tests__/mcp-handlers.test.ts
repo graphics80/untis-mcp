@@ -180,6 +180,20 @@ class StubUntisClient extends UntisClient {
     };
   }
 
+  override async getRoomBookings(_roomRef: number | string, _date?: Date) {
+    return {
+      room: { id: 20, name: 'H111', longName: 'Sitzungszimmer', building: 'H' },
+      date: '2026-05-18',
+      bookings: [{
+        id: 99, startTime: '2026-05-18T10:00:00+02:00', endTime: '2026-05-18T12:00:00+02:00',
+        activityType: 'Sitzung', classes: [], teachers: [], subject: '', rooms: ['H111'],
+        lessonText: '', info: 'Teamsitzung', bookingText: 'Fachschaft Mathematik', bookingRemark: 'Leitung: Müller',
+        substitutionText: '', studentGroup: '', statflags: '', cancelled: false, substitution: false,
+      }],
+      count: 1,
+    };
+  }
+
   override async getClassLeadership(classRef: number | string, _schoolYearId?: number) {
     if (classRef === 'NOPE') {
       return { class: null, classFound: false, classTeachers: [], departmentHead: null };
@@ -222,9 +236,9 @@ afterAll(async () => {
 // ─── tools/list ───────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 33 tools', async () => {
+  it('returns all 34 tools', async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(33);
+    expect(tools).toHaveLength(34);
     const names = tools.map(t => t.name);
     expect(names).not.toContain('getStudents');
     expect(names).toContain('getTeachers');
@@ -236,6 +250,7 @@ describe('tools/list', () => {
     expect(names).toContain('getTeachersByLocation');
     expect(names).toContain('getTeachersForRoom');
     expect(names).toContain('getCurrentDateTime');
+    expect(names).toContain('getRoomBookings');
   });
 });
 
@@ -681,6 +696,25 @@ describe('getTeachersForRoom', () => {
 
   it('rejects calls without roomId or roomName', async () => {
     const result = await client.callTool({ name: 'getTeachersForRoom', arguments: {} });
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe('getRoomBookings', () => {
+  it('surfaces booking detail for a bare reservation', async () => {
+    const data = await callTool('getRoomBookings', { roomName: 'H111' });
+    expect(data.room).toMatchObject({ id: 20, name: 'H111' });
+    expect(data.count).toBe(1);
+    expect(data.bookings[0]).toMatchObject({
+      activityType: 'Sitzung',
+      bookingText: 'Fachschaft Mathematik',
+      bookingRemark: 'Leitung: Müller',
+      info: 'Teamsitzung',
+    });
+  });
+
+  it('rejects calls without roomId or roomName', async () => {
+    const result = await client.callTool({ name: 'getRoomBookings', arguments: {} });
     expect(result.isError).toBe(true);
   });
 });

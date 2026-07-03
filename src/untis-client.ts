@@ -1074,6 +1074,90 @@ export class UntisClient {
   // Default range is the whole school year (schoolYearId, else current year);
   // pass startDate+endDate to narrow it. One timetable fetch for the room, so
   // it is cheap even over a full year — teachers are read from each lesson's `te`.
+  // Resolve a room by numeric id, exact name, or name/longName substring.
+  // getRooms is cached, so callers can await this alongside other fetches cheaply.
+  private async resolveRoom(roomRef: number | string): Promise<any> {
+    const rooms = await this.getRooms();
+    const longOf = (r: any) => r.longName || r.longname || '';
+    if (typeof roomRef === 'number') {
+      const room = rooms.find((r: any) => r.id === roomRef);
+      if (!room) throw new Error(`Room not found: ${roomRef}`);
+      return room;
+    }
+    const nq = normalizeToken(roomRef);
+    const room = rooms.find((r: any) => normalizeToken(r.name || '') === nq)
+      ?? rooms.find((r: any) => normalizeToken(r.name || '').includes(nq) || normalizeToken(longOf(r)).includes(nq));
+    if (!room) throw new Error(`Room not found: ${roomRef}`);
+    return room;
+  }
+
+  // Full detail for whatever occupies a room on a given day — including bare
+  // reservations (Sitzungen, blockings) that carry no class/teacher/subject.
+  // getTimetable strips these entries to "Unknown"; here we surface every
+  // descriptive field WebUntis returns (booking text/remark, lesson text, info,
+  // activity type, student group) so a "naked" booking is still identifiable.
+  async getRoomBookings(roomRef: number | string, date?: Date): Promise<{
+    room: { id: number; name: string; longName: string; building: string } | null;
+    date: string;
+    bookings: Array<{
+      id: number;
+      startTime: string;
+      endTime: string;
+      activityType: string;
+      classes: string[];
+      teachers: string[];
+      subject: string;
+      rooms: string[];
+      lessonText: string;
+      info: string;
+      bookingText: string;
+      bookingRemark: string;
+      substitutionText: string;
+      studentGroup: string;
+      statflags: string;
+      cancelled: boolean;
+      substitution: boolean;
+    }>;
+    count: number;
+  }> {
+    return this.withReconnect(async () => {
+      try {
+        const day = date ?? new Date();
+        const room = await this.resolveRoom(roomRef);
+        const lessons = await this.getTimetableForRoom(room.id, day, day);
+        const bookings = lessons
+          .map((l: any) => ({
+            id: l.id,
+            startTime: this.formatTimeToISO(l.startTime, l.date),
+            endTime: this.formatTimeToISO(l.endTime, l.date),
+            activityType: l.activityType || '',
+            classes: l.kl?.map((c: any) => c.name) || [],
+            teachers: l.te?.map((t: any) => t.name) || [],
+            subject: l.su?.[0]?.name || '',
+            rooms: l.ro?.map((r: any) => r.name) || [],
+            lessonText: l.lstext || '',
+            info: l.info || '',
+            bookingText: l.bkText || '',
+            bookingRemark: l.bkRemark || '',
+            substitutionText: l.substText || '',
+            studentGroup: l.sg || '',
+            statflags: l.statflags || '',
+            cancelled: l.code === 'cancelled',
+            substitution: l.code === 'irregular',
+          }))
+          .sort((a, b) => a.startTime.localeCompare(b.startTime));
+        return {
+          room: { id: room.id, name: room.name, longName: room.longName || room.longname || '', building: room.building || '' },
+          date: toISODate(day),
+          bookings,
+          count: bookings.length,
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch room bookings: ${error}`);
+      }
+    });
+  }
+
   async getTeachersForRoom(roomRef: number | string, startDate?: Date, endDate?: Date, schoolYearId?: number): Promise<{
     room: { id: number; name: string; longName: string; building: string } | null;
     schoolYear: { id: number; name: string } | null;
@@ -1098,17 +1182,8 @@ export class UntisClient {
           schoolYear = await this.resolveYearForDate(start, schoolYearId);
         }
 
-        const [rooms, allTeachers] = await Promise.all([this.getRooms(), this.getTeachers()]);
+        const [room, allTeachers] = await Promise.all([this.resolveRoom(roomRef), this.getTeachers()]);
         const longOf = (r: any) => r.longName || r.longname || '';
-        let room: any;
-        if (typeof roomRef === 'number') {
-          room = rooms.find((r: any) => r.id === roomRef);
-        } else {
-          const nq = normalizeToken(roomRef);
-          room = rooms.find((r: any) => normalizeToken(r.name || '') === nq)
-            ?? rooms.find((r: any) => normalizeToken(r.name || '').includes(nq) || normalizeToken(longOf(r)).includes(nq));
-        }
-        if (!room) throw new Error(`Room not found: ${roomRef}`);
 
         const lessons = await this.getTimetableForRoom(room.id, start, end);
         const counts = new Map<string, number>();

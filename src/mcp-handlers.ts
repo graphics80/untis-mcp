@@ -382,6 +382,19 @@ const TOOL_LIST = [
             required: [],
           },
         },
+        {
+          name: TOOLS.GET_ROOM_BOOKINGS,
+          description: 'Get everything scheduled in a room on a given day (default: today), with FULL detail — including bare reservations/blockings (Sitzungen) that carry no class, teacher or subject and show up as "Unknown" in getTimetable. Returns the descriptive fields WebUntis holds for such bookings: bookingText, bookingRemark, lessonText, info, activityType and studentGroup. Use this to find out who/what a "naked" room booking is. Identify the room by roomId or roomName (name matched exactly first, then as a substring, e.g. "H111").',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              roomId: { type: 'number', description: 'Room ID (provide this or roomName). Use getRooms to find IDs.' },
+              roomName: { type: 'string', description: 'Room name or partial name (e.g. "H111"), provide this or roomId' },
+              date: { type: 'string', description: 'Date (YYYY-MM-DD, optional, default: today)' },
+            },
+            required: [],
+          },
+        },
 ];
 
 // Build the optional `{ email }` part of a teacher object. Spread into the
@@ -868,6 +881,15 @@ export function registerHandlers(server: Server, untisClient: UntisClient, email
             ...data,
             teachers: data.teachers.map((t) => ({ ...t, ...emailField(emailDomain, t.longName) })),
           };
+          break;
+        }
+
+        case TOOLS.GET_ROOM_BOOKINGS: {
+          const rbArgs = validatedArgs as any;
+          result = await untisClient.getRoomBookings(
+            rbArgs.roomId ?? rbArgs.roomName,
+            rbArgs.date ? new Date(rbArgs.date) : undefined,
+          );
           break;
         }
 

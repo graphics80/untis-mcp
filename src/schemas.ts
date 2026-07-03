@@ -34,6 +34,7 @@ export const TOOLS = {
   GET_CLASS_LEADERSHIP: 'getClassLeadership',
   GET_TEACHERS_BY_LOCATION: 'getTeachersByLocation',
   GET_TEACHERS_FOR_ROOM: 'getTeachersForRoom',
+  GET_ROOM_BOOKINGS: 'getRoomBookings',
 } as const;
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format');
@@ -186,4 +187,9 @@ export const toolSchemas = {
   })
     .refine((d) => !!d.roomId || !!d.roomName, { message: 'Provide either roomId or roomName' })
     .refine((d) => !!d.startDate === !!d.endDate, { message: 'Provide startDate and endDate together, or neither' }),
+  [TOOLS.GET_ROOM_BOOKINGS]: z.object({
+    roomId: z.number().int().positive().optional(),
+    roomName: z.string().min(1).optional(),
+    date: dateSchema.optional(),
+  }).refine((d) => !!d.roomId || !!d.roomName, { message: 'Provide either roomId or roomName' }),
 };
