@@ -862,6 +862,24 @@ describe('getTeachersForClass schoolYearId', () => {
     const client = await makeClient();
     await expect(client.getTeachersForClass(10, 30, 999)).rejects.toThrow('School year 999 not found');
   });
+
+  it('ignores school-wide event blocks that carry the whole faculty', async () => {
+    mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+    mockInstance.getTeachers.mockResolvedValue([
+      { id: 1, name: 'MUS', longName: 'Mustermann', title: '' },
+      { id: 2, name: 'DivI', longName: 'Div. Lehrer IT', title: '' },
+      { id: 3, name: 'AL: MaKe', longName: 'Zuständige Abteilungsleitung', title: '' },
+    ]);
+    // A real subject lesson (has `su`) plus a subject-less event block that lists
+    // extra faculty/placeholder accounts in `te` — the block must be dropped.
+    mockInstance.getTimetableForRange.mockResolvedValue([
+      makeLesson({ te: [{ name: 'MUS' }], su: [{ name: 'Mathematik' }] }),
+      { date: 20260518, startTime: 745, endTime: 2359, te: [{ name: 'DivI' }, { name: 'AL: MaKe' }], su: [], code: 'irregular' },
+    ]);
+    const client = await makeClient();
+    const result = await client.getTeachersForClass(10, 30, 42);
+    expect(result.map(t => t.name)).toEqual(['MUS']);
+  });
 });
 
 // ─── getAbsences with schoolYearId ────────────────────────────────────────────

@@ -213,13 +213,13 @@ const TOOL_LIST = [
         },
         {
           name: TOOLS.GET_TEACHERS_FOR_CLASS,
-          description: `Get all teachers who teach a specific class. ${SCHOOL_YEAR_HINT}`,
+          description: `List EVERY teacher who teaches (or taught) a class by scanning its timetable over a time window, deduplicated. Use this whenever the user wants "all teachers of a class", "which teachers does class X have", or "everyone who taught class X" — including cases where teachers changed during the year (e.g. a subject teacher was replaced mid-year): each distinct teacher that appears in any scanned lesson is returned, so mid-year swaps show up as multiple teachers. To capture ALL teachers across a full school year (not just recent weeks), set schoolYearId — it scans that entire school year and is the correct choice for "all teachers over the whole year". Without schoolYearId only the last \`days\` days are scanned (default 30), so a teacher who only taught earlier in the year would be missed. NOTE: this covers a single school year at a time; to cover a multi-year apprenticeship, call once per schoolYearId and merge. This is a full timetable scan across all subjects — NOT the homeroom teacher: for just the Klassenlehrer / homeroom teacher(s) and department head use getClassLeadership instead. ${SCHOOL_YEAR_HINT}`,
           inputSchema: {
             type: 'object',
             properties: {
-              classId: { type: 'number', description: 'Class ID' },
-              days: { type: 'number', description: 'Days of history to scan (default: 30, ignored when schoolYearId is set)' },
-              schoolYearId: { type: 'number', description: 'School year ID (optional; scans the full school year instead of last N days)' },
+              classId: { type: 'number', description: 'Class ID (from getClasses)' },
+              days: { type: 'number', description: 'Days of timetable history to scan back from today (default: 30). Ignored when schoolYearId is set. A short window only surfaces recently-active teachers — prefer schoolYearId for full coverage.' },
+              schoolYearId: { type: 'number', description: 'School year ID (from getSchoolYear). When set, scans the ENTIRE school year instead of the last N days — use this to get every teacher across the whole year, including those who taught only part of it or were replaced mid-year.' },
             },
             required: ['classId'],
           },

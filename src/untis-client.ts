@@ -320,8 +320,16 @@ export class UntisClient {
           this.getTeachers(),
         ]);
 
+        // Only count teachers from real subject lessons. School-wide event /
+        // block entries (project weeks, special days) come back with no subject
+        // (empty `su`) and carry the ENTIRE faculty in `te` — including "AL:" and
+        // "Div. Lehrer" placeholder accounts. Untis genuinely stores them that way,
+        // so both APIs agree; filtering on a present subject drops those blocks
+        // while keeping every real teaching assignment. Without this a class whose
+        // year contains any such event returns the whole staff (~140 teachers).
         const teacherNames = new Set<string>();
         for (const lesson of lessons) {
+          if (!(lesson.su && lesson.su.length > 0)) continue;
           for (const t of lesson.te || []) teacherNames.add(t.name);
         }
 
