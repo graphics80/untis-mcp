@@ -349,14 +349,34 @@ export class UntisClient {
   }
 
   async getClasses(schoolYearId?: number): Promise<any[]> {
-    return this.cached(`classes:${schoolYearId ?? 'current'}`, () => this.withReconnect(async () => {
+    // node-webuntis sends an empty getKlassen request when schoolyearId is
+    // undefined, which makes the server fall back to its own "active" year.
+    // In the summer gap between school years that active year has no classes
+    // and node-webuntis throws "Server didn't return any result.". Resolve a
+    // concrete id up front so we always ask for a year that exists.
+    const resolvedId = schoolYearId ?? (await this.resolveDefaultSchoolYearId());
+    return this.cached(`classes:${resolvedId ?? 'current'}`, () => this.withReconnect(async () => {
       const client = this.ensureClient();
       try {
-        return await client.getClasses(true, schoolYearId as unknown as number) || [];
+        return await client.getClasses(true, resolvedId as unknown as number) || [];
       } catch (error) {
         throw new Error(`Failed to fetch classes: ${error}`);
       }
     }));
+  }
+
+  // Concrete default school year for calls that omit one: the year containing
+  // today, else (summer gap / off-season) the latest year by end date — the
+  // upcoming/most-recent one, matching getLatestSchoolyear — so we never send
+  // an empty schoolyearId. Undefined only if no years exist at all.
+  private async resolveDefaultSchoolYearId(): Promise<number | undefined> {
+    const years = await this.fetchSchoolyears();
+    if (!years.length) return undefined;
+    const now = new Date();
+    const current = years.find((y: any) => y.startDate <= now && now <= y.endDate);
+    if (current) return current.id;
+    const latest = years.reduce((a: any, b: any) => (b.endDate > a.endDate ? b : a));
+    return latest.id;
   }
 
   // Resolve a single class's linked companion classes (Partnerklassen) so the

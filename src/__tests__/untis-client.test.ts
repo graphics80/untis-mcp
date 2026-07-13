@@ -365,14 +365,16 @@ describe('getClassesOnDay', () => {
     expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 1);
   });
 
-  it('falls back to null school year and undefined filter when the date is outside all years', async () => {
+  it('falls back to null school year but still filters getClasses by the latest year when the date is outside all years', async () => {
     mockInstance.getSchoolyears.mockResolvedValue(SCHOOL_YEARS);
     mockInstance.getClasses.mockResolvedValue(CLASSES);
     mockInstance.getTimetableFor.mockResolvedValue([]);
     const client = await makeClient();
     const result = await client.getClassesOnDay(new Date('2030-01-01'));
     expect(result.schoolYear).toBeNull();
-    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, undefined);
+    // getClasses must never be called with an empty schoolyear (server would
+    // return no result); it falls back to the latest known year id.
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 1);
   });
 
   it('excludes classes whose only lessons are cancelled', async () => {
@@ -782,11 +784,30 @@ describe('getClasses schoolYearId', () => {
     expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 42);
   });
 
-  it('passes undefined when no schoolYearId provided (default behaviour)', async () => {
+  it('resolves the year containing today when no schoolYearId provided', async () => {
+    // Wide range so the result is independent of the real clock.
+    mockInstance.getSchoolyears.mockResolvedValue([
+      { id: 99, name: 'now', startDate: new Date('2000-01-01'), endDate: new Date('2100-01-01') },
+    ]);
     mockInstance.getClasses.mockResolvedValue([]);
     const client = await makeClient();
     await client.getClasses();
-    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, undefined);
+    // Never undefined — that makes the server return no result in the summer gap.
+    expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 99);
+  });
+
+  it('falls back to the latest year by end date when today is in a between-years gap', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-13')); // after 2025/26 ends, before 2026/27 starts
+    try {
+      mockInstance.getSchoolyears.mockResolvedValue(SAMPLE_SCHOOL_YEARS);
+      mockInstance.getClasses.mockResolvedValue([]);
+      const client = await makeClient();
+      await client.getClasses();
+      expect(mockInstance.getClasses).toHaveBeenCalledWith(true, 42); // 2025/26 ends latest
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
