@@ -128,7 +128,9 @@ export class UntisClient {
   // School years, cached for the internal date-range/quarter resolution paths that
   // re-resolve them on every call.
   private async fetchSchoolyears(): Promise<any[]> {
-    return this.cached('schoolyears', async () => (await this.ensureClient().getSchoolyears()) || []);
+    return this.cached('schoolyears', () => this.withReconnect(
+      async () => (await this.ensureClient().getSchoolyears()) || [],
+    ));
   }
 
   async initialize(school: string, username: string, password: string, baseUrl: string): Promise<void> {
